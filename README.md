@@ -1,6 +1,6 @@
 # opus-tuner/**claude-skills**
 
-[![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml)
+[![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml?query=branch%3Amain)
 [![version](https://img.shields.io/badge/version-0.3.2-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/github/license/YahyaLendani/opus-tuner)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)](docs/platforms.md)
