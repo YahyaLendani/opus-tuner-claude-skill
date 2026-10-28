@@ -121,7 +121,8 @@ write `settings.json` at all. Consequences, stated plainly:
 - `/wrap` still works, because it is a skill that runs `brief.ps1`;
 - the gear skills still work when the model chooses them, but nothing routes to
   them;
-- `doctor.ps1` reports "no hooks registered" rather than failing.
+- `doctor.ps1` reports an advisory install (`skip` on the six wiring checks) and
+  exits 0 rather than failing; a partial wiring still fails.
 
 If a previous install left hooks behind, `-NoHooks` warns you and points at
 `uninstall.ps1 -KeepSkills`, which removes the hooks while keeping the skills.

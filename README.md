@@ -12,7 +12,7 @@ re-read it for work that did not need it.
 Six hooks, seven skills, a handoff writer, four effort gears, and a measuring
 tool. No network calls, no API keys, no dependencies.
 
-> **Status:** 0.3.1. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.3.2. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -142,7 +142,7 @@ Hooks only exist in Claude Code. Two fallbacks:
 # (56 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
-# 50 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, against a sandbox
+# 53 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, against a sandbox
 powershell -NoProfile -File tests\install-test.ps1
 
 # is the install healthy? hooks registered, scripts present, config valid
@@ -150,6 +150,9 @@ powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1
 
 # prove the registered command strings actually run (all six events, ~3 s)
 powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1 -Replay
+
+# skills only: check this copy without requiring hooks (implied when none are registered)
+powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1 -SkillsOnly
 ```
 
 ```sh
@@ -170,6 +173,13 @@ a post-install gate.
 throwaway config dir, and asserts exit 0 plus empty-or-valid-JSON output. That is
 what catches a quoting error in the command string or a shell that cannot start
 the interpreter — failures that look identical to "no hooks" at runtime.
+
+A copy with no registered hooks is reported as an **advisory install** and exits
+0: the skills, config and scripts are checked, the six wiring checks are shown as
+`skip`, and nothing is written to the state directory. A *partial* wiring (some
+events registered, others not) still fails, because that is a broken install
+rather than a deliberate one. `-SkillsOnly` forces the same view when hooks do
+exist but you only want to validate the skills.
 
 In Claude Code, `/hooks` should list `UserPromptSubmit`, `PostToolUse`,
 `PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact`; `/skills` should list

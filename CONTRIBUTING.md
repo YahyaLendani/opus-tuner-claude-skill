@@ -57,7 +57,7 @@ pwsh -NoProfile -File skills/opus-tuner/scripts/selftest.ps1
 pwsh -NoProfile -File tests/install-test.ps1
 ```
 
-Both must pass with 0 failures (currently 57 and 50 assertions). The self-test is
+Both must pass with 0 failures (currently 57 and 53 assertions). The self-test is
 sandboxed through `OPUS_TUNER_STATE`; the installer test uses a throwaway
 `CLAUDE_CONFIG_DIR`. If you add a hook or a config key, add an assertion for it,
 and update the expected counts in `README.md` and `CHANGELOG.md` when they change.

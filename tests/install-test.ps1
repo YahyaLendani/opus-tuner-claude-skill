@@ -156,6 +156,15 @@ try {
     Check 'doctor -Replay catches a broken hook command' ($LASTEXITCODE -eq 1 -and $brokenOut -match 'replay Stop') $brokenOut
     [System.IO.File]::WriteAllText($settingsFile, $rawSettings, (New-Object System.Text.UTF8Encoding($false)))
 
+    # Auto-advisory must fire only at zero hooks. A partial install is broken,
+    # not advisory, and must still fail rather than quietly pass.
+    $obj = $rawSettings | ConvertFrom-Json
+    $obj.hooks.PSObject.Properties.Remove('PreCompact')
+    [System.IO.File]::WriteAllText($settingsFile, ($obj | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+    $partialOut = (& $Interpreter @ExePrefix -File $doctor 2>&1) -join "`n"
+    Check 'doctor still fails on a partial wiring' ($LASTEXITCODE -eq 1 -and $partialOut -match 'PreCompact registered') $partialOut
+    [System.IO.File]::WriteAllText($settingsFile, $rawSettings, (New-Object System.Text.UTF8Encoding($false)))
+
     $badCfg = Join-Path $sandbox 'tuner.config.json'
     [System.IO.File]::WriteAllText($badCfg, '{ "routineTokens": 150000,', (New-Object System.Text.UTF8Encoding($false)))
     $docOut = (& $Interpreter @ExePrefix -File $doctor 2>&1) -join "`n"
@@ -211,6 +220,13 @@ try {
     Check 'advisory mode writes no settings.json' (-not (Test-Path (Join-Path $advisory 'settings.json')))
     Check 'advisory mode still installs skills' (Test-Path (Join-Path (Join-Path $advisory 'skills') 'opus-tuner'))
     Check 'advisory mode still writes CLAUDE.md' ((Get-Content (Join-Path $advisory 'CLAUDE.md') -Raw) -match 'opus-tuner:begin')
+
+    # A skills-only install is a legitimate configuration, not a broken one. The
+    # doctor must say so and exit 0 instead of failing six wiring checks.
+    $advDoctor = Join-Path (Join-Path (Join-Path (Join-Path $advisory 'skills') 'opus-tuner') 'scripts') 'doctor.ps1'
+    $advOut = (& $Interpreter @ExePrefix -File $advDoctor 2>&1) -join "`n"
+    Check 'doctor reports an advisory install as healthy' ($LASTEXITCODE -eq 0 -and $advOut -match 'advisory install') $advOut
+    Check 'advisory doctor creates no state directory' (-not (Test-Path (Join-Path $advisory 'state')))
 } finally {
     $env:CLAUDE_CONFIG_DIR = $oldConfigDir
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue

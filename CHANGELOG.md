@@ -3,6 +3,30 @@
 All notable changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-10-28
+
+The doctor stops crying wolf on a skills-only install.
+
+### Added
+
+- `doctor.ps1 -SkillsOnly`, and automatic advisory detection: when
+  `settings.json` registers no opus-tuner hooks, the six wiring checks are
+  reported as `skip` instead of failing, the state-directory probe is skipped so
+  no folder is created, and the exit code is 0 with an explicit
+  `advisory install` line. A partial wiring (some events registered, others
+  missing) still fails — that is a broken install, not a deliberate one.
+- `doctor.ps1` run from a vendored copy (`<root>/skills/opus-tuner/scripts`) now
+  inspects that copy instead of `~/.claude`. The installed copy derives
+  `~/.claude`, so nothing changes there; `-Root` and `CLAUDE_CONFIG_DIR` still
+  take precedence.
+- `-Json` reports `advisory` and `skipped` alongside `ok` and `failed`.
+
+### Notes
+
+- Self-test: 57 assertions. Installer test: 53 assertions (was 50), now covering
+  the advisory install, the absence of a created state directory, and the
+  partial-wiring boundary.
+
 ## [0.3.1] - 2026-10-28
 
 Proof of wiring, without waiting for a prompt.

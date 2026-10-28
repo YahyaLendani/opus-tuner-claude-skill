@@ -42,6 +42,26 @@ A quick liveness check: send one prompt, then look at
 `~/.claude/state/tuner/<session-id>.json`. Its `updated` field should be recent.
 If the file does not exist, `SessionStart` did not run.
 
+## The doctor says "advisory install"
+
+That is not a failure. It means no opus-tuner hooks are registered in the config
+dir the doctor inspected, so the six wiring checks are skipped and the skills,
+config and scripts are validated on their own. Exit code is 0.
+
+Two things it can mean:
+
+- **You installed with `-NoHooks`**, or copied the skills into a project by hand.
+  Nothing automatic runs: no ceilings, no `/compact` refusal, no handoff nudges.
+  The skills still work when you invoke them. Run `install.ps1 -Force` to add the
+  hooks.
+- **The doctor is checking the wrong tree.** It checks the copy it belongs to: run
+  from `<root>/skills/opus-tuner/scripts` it inspects `<root>`, not `~/.claude`.
+  Pass `-Root "$env:USERPROFILE\.claude"` to check the user-wide install from a
+  vendored copy, or `-SkillsOnly` to silence the hooks on purpose.
+
+A *partial* wiring — some events registered, others missing — is not advisory and
+still fails. That is a real break: re-run `install.ps1 -Force`.
+
 ## A hook is slow
 
 Expect ~450 ms per blocking hook. If it is much slower:

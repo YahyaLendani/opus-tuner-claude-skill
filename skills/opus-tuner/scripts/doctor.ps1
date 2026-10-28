@@ -5,6 +5,7 @@
 #   powershell -NoProfile -File doctor.ps1 -Json
 #   powershell -NoProfile -File doctor.ps1 -Root C:\temp\sandbox
 #   powershell -NoProfile -File doctor.ps1 -Replay
+#   powershell -NoProfile -File doctor.ps1 -SkillsOnly
 #
 # Exit code 0 means everything it checks is healthy, 1 means something needs
 # attention. It is read-only apart from a probe file in the state directory, and
@@ -15,13 +16,24 @@
 # empty-or-valid-JSON output. Registration plus a script that parses is not the
 # same as a hook that runs: a quoting error in the command string, or a shell
 # that cannot find the interpreter, fails only at invocation time.
+#
+# -SkillsOnly checks the skills, config and scripts without requiring hooks. It
+# is implied automatically when settings.json registers no opus-tuner hooks, so
+# a copy that is deliberately advisory (a vendored skills-only install) reports
+# healthy instead of failing six wiring checks it never asked for.
+#
+# Run from a vendored copy (<root>/skills/opus-tuner/scripts) it checks that
+# copy, not the user-wide ~/.claude. The installed copy derives ~/.claude, so
+# the default is unchanged there. -Root and CLAUDE_CONFIG_DIR still win.
 
 param(
     [switch]$Json,
     # Check a different config dir than the one in use.
     [string]$Root = '',
     # Execute the registered commands, not just check that they exist.
-    [switch]$Replay
+    [switch]$Replay,
+    # Do not require or validate hook registration.
+    [switch]$SkillsOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +43,17 @@ if ($Root) {
     $script:TunerRoot = $Root
     $script:TunerState = Join-Path (Join-Path $Root 'state') 'tuner'
     $script:TunerConfig = Join-Path $Root 'tuner.config.json'
+} elseif (-not $env:CLAUDE_CONFIG_DIR) {
+    # A vendored copy lives at <root>/skills/opus-tuner/scripts, so the tree the
+    # doctor belongs to is three levels up. The installed copy derives ~/.claude,
+    # which is what _common.ps1 already chose, so this is a no-op there.
+    $derivedRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+    if ($derivedRoot -and $derivedRoot -ne $script:TunerRoot -and
+        (Test-Path -LiteralPath (Join-Path (Join-Path $derivedRoot 'skills') 'opus-tuner'))) {
+        $script:TunerRoot = $derivedRoot
+        if (-not $env:OPUS_TUNER_STATE) { $script:TunerState = Join-Path (Join-Path $derivedRoot 'state') 'tuner' }
+        if (-not $env:OPUS_TUNER_CONFIG) { $script:TunerConfig = Join-Path $derivedRoot 'tuner.config.json' }
+    }
 }
 
 $settingsPath = Join-Path $script:TunerRoot 'settings.json'
@@ -42,6 +65,13 @@ function Add-Check {
     param([string]$Name, [bool]$Ok, [string]$Detail = '')
     [void]$script:checks.Add([pscustomobject]@{ check = $Name; ok = $Ok; detail = $Detail })
     if (-not $Ok) { $script:fail++ }
+}
+
+# A check that does not apply here. Recorded, printed, never counted as a
+# failure: an advisory install is a legitimate configuration, not a broken one.
+function Add-Skip {
+    param([string]$Name, [string]$Detail = '')
+    [void]$script:checks.Add([pscustomobject]@{ check = $Name; ok = $true; skipped = $true; detail = $Detail })
 }
 
 function Get-HookPaths {
@@ -109,9 +139,8 @@ $expected = [ordered]@{
 
 # ---------- settings and wiring ----------
 $settings = $null
-if (-not (Test-Path -LiteralPath $settingsPath)) {
-    Add-Check 'settings.json exists' $false $settingsPath
-} else {
+$settingsExists = Test-Path -LiteralPath $settingsPath
+if ($settingsExists) {
     try {
         $settings = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
         Add-Check 'settings.json parses' $true
@@ -120,9 +149,36 @@ if (-not (Test-Path -LiteralPath $settingsPath)) {
     }
 }
 
+# What is actually registered decides what "healthy" means here. A skills-only
+# copy has no hooks by design, and six red wiring checks for that would teach
+# people to ignore the doctor.
+$hookCount = 0
+if ($settings) {
+    foreach ($ev in $expected.Keys) {
+        if (@(Get-HookPaths $settings $ev).Count -gt 0) { $hookCount++ }
+    }
+}
+$advisory = $SkillsOnly -or ($hookCount -eq 0)
+
+if (-not $settingsExists) {
+    if ($advisory) {
+        Add-Skip 'settings.json exists' 'advisory install: nothing to register'
+    } else {
+        Add-Check 'settings.json exists' $false $settingsPath
+    }
+}
+
 if ($settings) {
     foreach ($ev in $expected.Keys) {
         $paths = Get-HookPaths $settings $ev
+        if ($SkillsOnly) {
+            Add-Skip "$ev registered" 'skills-only: hooks not checked'
+            continue
+        }
+        if ($advisory) {
+            Add-Skip "$ev registered" 'advisory install: no hooks registered'
+            continue
+        }
         Add-Check "$ev registered" (@($paths).Count -ge 1) "found $(@($paths).Count)"
         if (@($paths).Count -ge 1) {
             $missing = @($paths | Where-Object { -not (Test-Path -LiteralPath $_) })
@@ -150,7 +206,10 @@ if ($settings) {
 
 # ---------- replay ----------
 if ($Replay) {
-    if (-not $settings) {
+    if ($SkillsOnly -or $advisory) {
+        $why = if ($SkillsOnly) { 'skills-only: hooks not checked' } else { 'advisory install: no hook commands to execute' }
+        Add-Skip 'replay' $why
+    } elseif (-not $settings) {
         Add-Check 'replay: settings.json available' $false 'install first'
     } else {
         $replayRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('opus-tuner-replay-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -255,21 +314,28 @@ if ($scripts.Count -eq 0) {
 }
 
 # ---------- state is writable ----------
-try {
-    if (-not (Test-Path -LiteralPath $script:TunerState)) {
-        New-Item -ItemType Directory -Force -Path $script:TunerState | Out-Null
+if ($advisory) {
+    $why = if ($SkillsOnly) { 'skills-only: hooks not checked' } else { 'advisory install: no hooks, no state written' }
+    Add-Skip 'state directory is writable' $why
+} else {
+    try {
+        if (-not (Test-Path -LiteralPath $script:TunerState)) {
+            New-Item -ItemType Directory -Force -Path $script:TunerState | Out-Null
+        }
+        $probe = Join-Path $script:TunerState ('.doctor-probe-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+        [System.IO.File]::WriteAllText($probe, 'ok', (New-Object System.Text.UTF8Encoding($false)))
+        Remove-Item -LiteralPath $probe -Force
+        Add-Check 'state directory is writable' $true
+    } catch {
+        Add-Check 'state directory is writable' $false $_.Exception.Message
     }
-    $probe = Join-Path $script:TunerState ('.doctor-probe-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
-    [System.IO.File]::WriteAllText($probe, 'ok', (New-Object System.Text.UTF8Encoding($false)))
-    Remove-Item -LiteralPath $probe -Force
-    Add-Check 'state directory is writable' $true
-} catch {
-    Add-Check 'state directory is writable' $false $_.Exception.Message
 }
 
 # ---------- report ----------
+$skipped = @($checks | Where-Object { $_.PSObject.Properties['skipped'] -and $_.skipped }).Count
+
 if ($Json) {
-    Write-HookJson @{ ok = ($fail -eq 0); failed = $fail; checks = @($checks) }
+    Write-HookJson @{ ok = ($fail -eq 0); failed = $fail; advisory = $advisory; skipped = $skipped; checks = @($checks) }
     if ($fail -eq 0) { exit 0 } else { exit 1 }
 }
 
@@ -288,7 +354,9 @@ foreach ($c in $checks) {
         ''
         Write-Host $group -ForegroundColor Yellow
     }
-    if ($c.ok) {
+    if ($c.PSObject.Properties['skipped'] -and $c.skipped) {
+        Write-Host ("  skip  {0}  {1}" -f $c.check, $c.detail) -ForegroundColor DarkGray
+    } elseif ($c.ok) {
         Write-Host ("  ok    {0}" -f $c.check) -ForegroundColor Green
     } else {
         Write-Host ("  FAIL  {0}  {1}" -f $c.check, $c.detail) -ForegroundColor Red
@@ -297,7 +365,15 @@ foreach ($c in $checks) {
 
 ''
 if ($fail -eq 0) {
-    Write-Host "healthy: $($checks.Count) checks passed" -ForegroundColor Green
+    $passed = $checks.Count - $skipped
+    $suffix = if ($skipped -gt 0) { ", $skipped skipped" } else { '' }
+    Write-Host "healthy: $passed checks passed$suffix" -ForegroundColor Green
+    if ($hookCount -eq 0) {
+        Write-Host ''
+        Write-Host 'advisory install: no opus-tuner hooks are registered, so the ceilings,' -ForegroundColor Yellow
+        Write-Host 'the /compact refusal and the handoff nudges are off by design. The skills' -ForegroundColor Yellow
+        Write-Host 'still work. Run install.ps1 -Force to add the hooks.'
+    }
     Write-Host ''
     exit 0
 }

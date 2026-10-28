@@ -182,8 +182,15 @@ about 3 seconds and catches what registration alone cannot — a quoting error i
 the command string, a shell that cannot start the interpreter, or a hook that
 writes non-JSON to stdout.
 
-In `-NoHooks` (advisory) mode the hook checks report "no hooks registered" rather
-than failing, because that is the intended state.
+In `-NoHooks` (advisory) mode there is no `settings.json` to inspect, so the six
+wiring checks are reported as `skip` and the doctor exits 0: the skills, config
+and scripts are still validated, and nothing is written to the state directory.
+The same happens automatically whenever `settings.json` registers no opus-tuner
+hooks, which is what a vendored skills-only copy looks like. A *partial* wiring
+still fails — some events registered and others missing is a broken install, not
+a deliberate one. `-SkillsOnly` forces the advisory view when hooks do exist but
+you only want to check the skills. `-Json` reports `advisory` and `skipped`
+alongside `ok` and `failed`.
 
 ## Optional: trimming skill descriptions
 
