@@ -173,6 +173,17 @@ try {
     Check 'doctor still fails on a partial wiring' ($LASTEXITCODE -eq 1 -and $partialOut -match 'PreCompact registered') $partialOut
     [System.IO.File]::WriteAllText($settingsFile, $rawSettings, (New-Object System.Text.UTF8Encoding($false)))
 
+    # The effort check used to be keyed to 'claude-opus-5-5', so a future model
+    # name made it a silent no-op. It must validate whatever model is configured.
+    $future = $rawSettings | ConvertFrom-Json
+    $future | Add-Member -NotePropertyName modelSettings -Force -NotePropertyValue ([pscustomobject]@{
+        'claude-opus-6' = [pscustomobject]@{ effortLevel = 'extreme' }
+    })
+    [System.IO.File]::WriteAllText($settingsFile, ($future | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+    $futureOut = (& $Interpreter @ExePrefix -File $doctor 2>&1) -join "`n"
+    Check 'doctor validates effort for a model it has never heard of' ($LASTEXITCODE -eq 1 -and $futureOut -match 'model effort levels valid' -and $futureOut -match 'claude-opus-6=extreme') $futureOut
+    [System.IO.File]::WriteAllText($settingsFile, $rawSettings, (New-Object System.Text.UTF8Encoding($false)))
+
     $badCfg = Join-Path $sandbox 'tuner.config.json'
     [System.IO.File]::WriteAllText($badCfg, '{ "routineTokens": 150000,', (New-Object System.Text.UTF8Encoding($false)))
     $docOut = (& $Interpreter @ExePrefix -File $doctor 2>&1) -join "`n"

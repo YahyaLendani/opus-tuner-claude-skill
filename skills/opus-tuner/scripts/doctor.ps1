@@ -208,9 +208,27 @@ if ($settings) {
         Add-Check 'status line script exists' ($m.Success -and (Test-Path -LiteralPath $m.Groups[1].Value))
     }
 
-    if ($settings.modelSettings -and $settings.modelSettings.'claude-opus-5-5') {
-        $lvl = [string]$settings.modelSettings.'claude-opus-5-5'.effortLevel
-        Add-Check 'Opus 5.5 effort level valid' (@('low', 'medium', 'high', 'xhigh') -contains $lvl) $lvl
+    # Validate every per-model effort level, not just Opus 5.5's. Keying off one
+    # model name turns this check into a silent no-op the day a new model ships:
+    # an invalid value would sit in settings.json with the doctor reporting
+    # healthy. `max` is a transient routing choice, not a persisted value.
+    if ($settings.modelSettings) {
+        $valid = New-Object System.Collections.ArrayList
+        $invalid = New-Object System.Collections.ArrayList
+        foreach ($entry in @($settings.modelSettings.PSObject.Properties)) {
+            $lvl = [string]$entry.Value.effortLevel
+            if (-not $lvl) { continue }
+            if (@('low', 'medium', 'high', 'xhigh') -contains $lvl) {
+                [void]$valid.Add("$($entry.Name)=$lvl")
+            } else {
+                [void]$invalid.Add("$($entry.Name)=$lvl")
+            }
+        }
+        if ($invalid.Count -gt 0) {
+            Add-Check 'model effort levels valid' $false ("invalid: " + ($invalid -join ', '))
+        } elseif ($valid.Count -gt 0) {
+            Add-Check 'model effort levels valid' $true ($valid -join ', ')
+        }
     }
 }
 
@@ -355,7 +373,7 @@ $section = ''
 foreach ($c in $checks) {
     $group = switch -Regex ($c.check) {
         '^replay' { 'replay'; break }
-        '^(settings|UserPromptSubmit|PostToolUse|PostToolUseFailure|Stop|SessionStart|PreCompact|PreToolUse|status|Opus)' { 'wiring'; break }
+        '^(settings|UserPromptSubmit|PostToolUse|PostToolUseFailure|Stop|SessionStart|PreCompact|PreToolUse|status|model|Opus)' { 'wiring'; break }
         '^(routineTokens|deepTokens|mode|tuner)' { 'configuration'; break }
         '^skill' { 'skills'; break }
         '^all ' { 'scripts'; break }

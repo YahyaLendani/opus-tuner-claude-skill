@@ -146,6 +146,20 @@ A gear's `effort:` frontmatter applies to **that turn only**; later turns fall
 back to the resolved session level. `gear-max` uses `effort: max`, which Opus 5.5
 supports even though `max` is not a valid *persisted* `effortLevel` value.
 
+### When a new model ships
+
+The model name is data, not code: `doctor.ps1` validates the `effortLevel` of
+**every** entry under `modelSettings`, whatever the model is called, so a new
+model does not silently turn the check off. Retarget the key when you switch:
+
+```json
+"modelSettings": { "claude-opus-6": { "effortLevel": "high" } }
+```
+
+Persisted values are `low`, `medium`, `high` and `xhigh`. `max` is a routing
+choice for one turn, not something to write into settings; the doctor fails on it
+by name rather than ignoring it.
+
 ## In VS Code, the terminal, and Desktop
 
 All three run the same Claude Code binary and read the same

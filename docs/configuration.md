@@ -223,3 +223,14 @@ Model choice is not a tuner setting; it belongs in `settings.json`:
 The per-model form is the one Opus 5.5 reads. A top-level `effortLevel` applies to
 older models and to subagents without a saved level. See
 [the technical reference](../skills/opus-tuner/README.md#model-and-effort-verified-against-the-21312-settings-schema).
+
+`doctor.ps1` validates the `effortLevel` of every entry under `modelSettings`, not
+just `claude-opus-5-5`, so a new model name cannot turn the check into a silent
+no-op. When you switch models, retarget the key:
+
+```json
+"modelSettings": { "claude-opus-6": { "effortLevel": "high" } }
+```
+
+`low`, `medium`, `high` and `xhigh` are the persisted values. `max` is a one-turn
+routing choice; written to `settings.json` it is reported as invalid.
