@@ -1,7 +1,7 @@
 # opus-tuner/**claude-skills**
 
 [![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml?query=branch%3Amain)
-[![version](https://img.shields.io/github/v/release/YahyaLendani/opus-tuner?label=version)](https://github.com/YahyaLendani/opus-tuner/releases)
+[![version](https://img.shields.io/github/v/release/YahyaLendani/opus-tuner?label=version&style=flat)](https://github.com/YahyaLendani/opus-tuner/releases)
 [![license](https://img.shields.io/github/license/YahyaLendani/opus-tuner)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)](docs/platforms.md)
 [![code](https://img.shields.io/github/languages/top/YahyaLendani/opus-tuner)](https://github.com/YahyaLendani/opus-tuner/search?l=powershell)
