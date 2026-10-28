@@ -82,7 +82,7 @@ try {
     Check 'install exits 0' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
 
     $s = Read-Settings $sandbox
-    foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionStart')) {
+    foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionStart', 'PreCompact')) {
         Check "$ev has exactly one opus-tuner hook" ((Count-Our $s $ev) -eq 1) "count $(Count-Our $s $ev)"
     }
     Check 'PreToolUse not registered without -Enforce' ((Count-Our $s 'PreToolUse') -eq 0)
@@ -117,12 +117,26 @@ try {
     Check 'replaced skill folder backed up outside skills/' (@(Get-ChildItem (Join-Path $sandbox 'state\opus-tuner-backups') -Directory -ErrorAction SilentlyContinue).Count -ge 1)
     Check 'no backup folders inside skills/' (@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory -Filter '*.bak-*').Count -eq 0)
 
+    # ---------- doctor ----------
+    Write-Host ''
+    Write-Host 'doctor' -ForegroundColor Yellow
+    $doctor = Join-Path $sandbox 'skills\opus-tuner\scripts\doctor.ps1'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $doctor | Out-Null
+    Check 'doctor reports a healthy install' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
+
+    $badCfg = Join-Path $sandbox 'tuner.config.json'
+    [System.IO.File]::WriteAllText($badCfg, '{ "routineTokens": 150000,', (New-Object System.Text.UTF8Encoding($false)))
+    $docOut = (& powershell -NoProfile -ExecutionPolicy Bypass -File $doctor 2>&1) -join "`n"
+    Check 'doctor catches a malformed config' ($LASTEXITCODE -eq 1) "exit $LASTEXITCODE"
+    Check 'doctor names the bad config' ($docOut -match 'tuner\.config\.json') $docOut
+    Remove-Item -LiteralPath $badCfg -Force
+
     # ---------- uninstall ----------
     Write-Host ''
     Write-Host 'uninstall' -ForegroundColor Yellow
     & $uninstall | Out-Null
     $s = Read-Settings $sandbox
-    foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionStart')) {
+    foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionStart', 'PreCompact')) {
         Check "$ev has no opus-tuner hook" ((Count-Our $s $ev) -eq 0) "count $(Count-Our $s $ev)"
     }
     Check "user's Stop hook survives uninstall" ((Count-User $s 'Stop' 'mine.ps1') -eq 1)

@@ -125,3 +125,35 @@ step. Keep the scripts parseable by both so `pwsh` remains an option.
 
 **Consequence.** No Pester, no modules, no package manager. The test suites are
 plain PowerShell and run in CI on `windows-latest`.
+
+## 11. Watch compaction, refuse only the manual one
+
+**Context.** The bundle exists to replace compaction with a handoff, yet it had no
+visibility into compaction at all: no `PreCompact` hook, so a session could
+auto-compact at 300k and nothing recorded it. A tool that cannot see its own
+failure mode is guessing.
+
+**Decision.** Log every compaction with its context size, and refuse the **first**
+manual `/compact` per session once, pointing at `/wrap` + `/clear`. Never block
+automatic compaction.
+
+**Consequence.** Auto-compaction stays unblocked because it can be the recovery
+path for a context-limit error: refusing it there surfaces the error and fails the
+request, which is worse than the compaction. `PreCompact` also discards
+`systemMessage`, so a log row is the only way the event can be reported.
+`blockManualCompact: false` keeps the logging without the block.
+
+## 12. Warnings ride on systemMessage, never on context
+
+**Context.** Two things are invisible until they are expensive: a malformed
+`tuner.config.json` (silently reverts every knob to its default) and resuming a
+300k session (the first request re-reads all of it). Both are easy to report and
+both would cost tokens on every turn if injected as context.
+
+**Decision.** `SessionStart` reports both through `systemMessage`, which never
+enters the model's context, and combines them with the brief re-seed into a single
+JSON object.
+
+**Consequence.** The warnings are free but also invisible to the model, so they
+cannot change its behaviour — only the user's. That is the right trade for a
+message whose whole purpose is to inform a decision the model does not make.

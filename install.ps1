@@ -150,12 +150,13 @@ Set-OurHook $hooks 'PostToolUse' (New-HookGroup 'post-tool.ps1' 'Edit|Write|Mult
 Set-OurHook $hooks 'PostToolUseFailure' (New-HookGroup 'post-tool.ps1' '' 10 -Async)
 Set-OurHook $hooks 'Stop' (New-HookGroup 'stop.ps1')
 Set-OurHook $hooks 'SessionStart' (New-HookGroup 'session-start.ps1' 'startup|resume|clear|compact|fork' 15)
+Set-OurHook $hooks 'PreCompact' (New-HookGroup 'pre-compact.ps1' 'manual|auto')
 if ($Enforce) {
     Set-OurHook $hooks 'PreToolUse' (New-HookGroup 'pre-tool.ps1' 'Read')
 } else {
     Set-OurHook $hooks 'PreToolUse' $null
 }
-Write-Host '  ok     five hook events (PreToolUse only with -Enforce)'
+Write-Host '  ok     six hook events (PreToolUse only with -Enforce)'
 
 $statusLineOurs = $false
 if ($settings.Contains('statusLine') -and $settings['statusLine']) {
@@ -240,9 +241,11 @@ Write-Host 'done.' -ForegroundColor Green
 Write-Host ''
 Write-Host 'next:'
 Write-Host '  1. restart Claude Code (or Developer: Reload Window in VS Code)'
-Write-Host '  2. run /hooks  -> expect UserPromptSubmit, PostToolUse, PostToolUseFailure, Stop, SessionStart'
+Write-Host '  2. run /hooks  -> expect UserPromptSubmit, PostToolUse, PostToolUseFailure, Stop, SessionStart, PreCompact'
 Write-Host '  3. run /skills -> expect opus-tuner, gear-low, gear-medium, gear-xhigh, gear-max, wrap'
 $verify = Join-Path $skillsDir 'opus-tuner\scripts\selftest.ps1'
 Write-Host "  4. verify:    powershell -NoProfile -File `"$verify`""
+$doctor = Join-Path $skillsDir 'opus-tuner\scripts\doctor.ps1'
+Write-Host "     diagnose:  powershell -NoProfile -File `"$doctor`""
 Write-Host ''
 exit 0

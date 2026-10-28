@@ -63,6 +63,21 @@ function Get-TunerConfig {
     return $cfg
 }
 
+# Get-TunerConfig fails open to the defaults, which is correct for a hook but
+# leaves a typo invisible: a user who writes "routineTokens": "150k" silently
+# runs on defaults. This returns a warning string for SessionStart to show once.
+function Get-TunerConfigIssue {
+    if (-not (Test-Path -LiteralPath $script:TunerConfig)) { return '' }
+    try {
+        $raw = Get-Content -LiteralPath $script:TunerConfig -Raw -Encoding UTF8
+        if ([string]::IsNullOrWhiteSpace($raw)) { throw 'empty' }
+        $null = $raw | ConvertFrom-Json
+        return ''
+    } catch {
+        return "tuner.config.json is not valid JSON, so every setting is running on its default. Fix or delete $($script:TunerConfig)"
+    }
+}
+
 function Get-HookInput {
     try {
         $raw = [Console]::In.ReadToEnd()
@@ -99,7 +114,7 @@ function New-State {
         files   = @()
         fails   = 0
         maxUses = 0
-        nudged  = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false }
+        nudged  = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false }
         updated = ''
     }
 }
@@ -116,9 +131,9 @@ function Read-State {
             if (-not $s.Contains($k)) { $s[$k] = $d[$k] }
         }
         if (-not ($s['nudged'] -is [System.Collections.IDictionary])) {
-            $s['nudged'] = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false }
+            $s['nudged'] = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false }
         }
-        foreach ($k in @('soft', 'ceiling', 'escalated', 'hardWrap')) {
+        foreach ($k in @('soft', 'ceiling', 'escalated', 'hardWrap', 'compact')) {
             if (-not $s['nudged'].Contains($k)) { $s['nudged'][$k] = $false }
         }
         return $s

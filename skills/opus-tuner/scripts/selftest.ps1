@@ -260,7 +260,37 @@ $sid = New-Sid
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $small '' 'default' 'Stop')
 Check 'stop below 70% stays silent' ($r.text.Length -eq 0) $r.text
 
-# ---------- 5. enforcement ----------
+# ---------- 5. compaction ----------
+Write-Host ''
+Write-Host 'compaction' -ForegroundColor Yellow
+
+# Auto compaction is never blocked: if it is recovering from a context-limit
+# error, blocking it surfaces that error and fails the request.
+$sid = New-Sid
+$r = Invoke-Hook 'pre-compact.ps1' (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'auto' } | ConvertTo-Json -Compress)
+Check 'auto compaction is never blocked' ($r.text.Length -eq 0) $r.text
+
+# Manual compaction is pure waste below the ceiling, so it is refused once.
+$sid = New-Sid
+$manual = (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'manual' } | ConvertTo-Json -Compress)
+$r = Invoke-Hook 'pre-compact.ps1' $manual
+Check 'first manual /compact is blocked' ($r.text -match '"decision":"block"') $r.text
+Check 'compact reason names /wrap and /clear' ($r.text -match '/wrap' -and $r.text -match '/clear') $r.text
+
+$r = Invoke-Hook 'pre-compact.ps1' $manual
+Check 'second manual /compact is allowed' ($r.text.Length -eq 0) $r.text
+
+$noBlock = Join-Path $sandbox 'noblock.json'
+$c = Get-TunerConfig -Defaults
+$c.blockManualCompact = $false
+$c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $noBlock -Encoding UTF8
+$env:OPUS_TUNER_CONFIG = $noBlock
+$sid = New-Sid
+$r = Invoke-Hook 'pre-compact.ps1' (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'manual' } | ConvertTo-Json -Compress)
+Remove-Item Env:\OPUS_TUNER_CONFIG -ErrorAction SilentlyContinue
+Check 'blockManualCompact off only logs' ($r.text.Length -eq 0) $r.text
+
+# ---------- 6. enforcement ----------
 Write-Host ''
 Write-Host 'enforcement (mode=advise)' -ForegroundColor Yellow
 
@@ -307,6 +337,22 @@ $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'resume'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'resume does not inject the brief' ($r.text.Length -eq 0)
 Remove-Item -LiteralPath $briefPath -Force
+
+# Resuming pays before the first new token. The warning must ride on
+# systemMessage (free) rather than additionalContext (billed on every turn).
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'resume'; transcript_path = $over; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'resume warns about the context cost' ($r.text -match 'resuming at 260k') $r.text
+Check 'resume warning costs no context' ($r.text -match 'systemMessage' -and $r.text -notmatch 'additionalContext') $r.text
+
+# A malformed config falls back to defaults. Silence would make a typo invisible.
+$badCfg = Join-Path $sandbox 'bad.json'
+Set-Content -LiteralPath $badCfg -Value '{ "routineTokens": 150000,' -Encoding UTF8
+$env:OPUS_TUNER_CONFIG = $badCfg
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Remove-Item Env:\OPUS_TUNER_CONFIG -ErrorAction SilentlyContinue
+Check 'malformed config is reported' ($r.text -match 'not valid JSON') $r.text
 
 $sid = New-Sid
 Set-Content -LiteralPath (Get-StatePath $sid) -Value '{"tier":"deep","gear":"high","files":[],"fails":0,"maxUses":0,"nudged":{"soft":false,"ceiling":false,"escalated":false}}' -Encoding UTF8
@@ -364,13 +410,42 @@ if (Test-Path -LiteralPath $logPath) {
     $escs = @($logRows | Where-Object { $_.action -like 'escalate-*' }).Count
     $wraps = @($logRows | Where-Object { $_.action -eq 'hard-wrap' }).Count
     Check 'gears, escalations and hard wraps all logged' ($gears -gt 0 -and $escs -gt 0 -and $wraps -gt 0) "gear=$gears escalate=$escs hardwrap=$wraps"
+    $compacts = @($logRows | Where-Object { $_.action -like 'compact-*' }).Count
+    Check 'compaction events logged' ($compacts -ge 3) "rows=$compacts"
 }
 
 $stats = & $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'stats.ps1') -All 2>&1
 $statsText = ($stats | Where-Object { $_ -is [string] }) -join "`n"
 Check 'stats.ps1 summarizes the log' ($statsText -match 'by action' -and $statsText -match 'hard-wrap') $statsText.Substring(0, [Math]::Min(200, $statsText.Length))
 
-# ---------- 9. timing ----------
+# ---------- 9. audit comparison ----------
+Write-Host ''
+Write-Host 'audit baseline comparison' -ForegroundColor Yellow
+
+# audit.ps1 reads <config>/projects, so give it a sandbox transcript of its own
+# rather than pointing at whatever the developer has been working on.
+$proj = Join-Path $sandbox 'projects\p1'
+New-Item -ItemType Directory -Force -Path $proj | Out-Null
+$u = '{"type":"assistant","message":{"model":"claude-opus-5-5","role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":120000,"cache_creation_input_tokens":0,"output_tokens":300}}}'
+$pad = ('{"type":"cost-state","sessionId":"x","totalCostUSD":0.1}' + "`n") * 300
+[System.IO.File]::WriteAllText((Join-Path $proj 's1.jsonl'), $u + "`n" + $pad, (New-Object System.Text.UTF8Encoding($false)))
+
+$baseCsv = Join-Path $sandbox 'baseline.csv'
+@(
+    'Session,MB,Requests,CacheReadM,CacheWrM,OutputK,PeakCtxK,Model,CostUSD,LastWrite',
+    'aaaaaaaa,10,100,500,10,20,300,opus,900,01-01',
+    'bbbbbbbb,10,100,500,10,20,320,opus,900,01-02'
+) | Set-Content -LiteralPath $baseCsv -Encoding UTF8
+
+$oldCfgDir = $env:CLAUDE_CONFIG_DIR
+$env:CLAUDE_CONFIG_DIR = $sandbox
+$auditOut = (& $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'audit.ps1') -Recent 0 -Baseline $baseCsv) -join "`n"
+$env:CLAUDE_CONFIG_DIR = $oldCfgDir
+
+Check 'audit prints a baseline comparison' ($auditOut -match 'baseline comparison') $auditOut
+Check 'comparison includes a delta' ($auditOut -match 'cache read' -and $auditOut -match '-?\d+%') $auditOut
+
+# ---------- 10. timing ----------
 Write-Host ''
 Write-Host 'timing (UserPromptSubmit and Stop block the session; PostToolUse is async)' -ForegroundColor Yellow
 $budget = $BudgetMs

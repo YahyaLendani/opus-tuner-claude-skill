@@ -4,6 +4,7 @@
 #   powershell -NoProfile -File audit.ps1                 # newest 10 sessions
 #   powershell -NoProfile -File audit.ps1 -Recent 30
 #   powershell -NoProfile -File audit.ps1 -Csv out.csv
+#   powershell -NoProfile -File audit.ps1 -Baseline baseline.csv
 #
 # Cache read dominates the token count; cache write and output dominate the
 # price. The report shows both so neither gets optimized away by accident.
@@ -12,7 +13,10 @@ param(
     [int]$Recent = 10,
     [string]$Project = '',
     [switch]$Json,
-    [string]$Csv = ''
+    [string]$Csv = '',
+    # A CSV written by an earlier run, to print deltas against. Compare against
+    # a file from the same parser version: the pre-2x-fix numbers are wrong.
+    [string]$Baseline = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +33,44 @@ function Get-Family {
     if ($Model -match 'sonnet') { return 'sonnet' }
     if ($Model -match 'haiku')  { return 'haiku' }
     return 'opus'
+}
+
+# Aggregate either the live rows or an imported CSV. Both carry the same column
+# names, so one function keeps the two sides of the comparison honest.
+function Get-Aggregate {
+    param($Rows)
+    $readM = 0.0; $cost = 0.0; $req = 0
+    $peaks = New-Object System.Collections.ArrayList
+    foreach ($r in @($Rows)) {
+        if ($null -eq $r) { continue }
+        $readM += [double]$r.CacheReadM
+        $cost += [double]$r.CostUSD
+        $req += [int]$r.Requests
+        [void]$peaks.Add([double]$r.PeakCtxK)
+    }
+    $median = 0.0
+    if ($peaks.Count -gt 0) {
+        $sorted = @($peaks | Sort-Object)
+        $mid = [int][Math]::Floor($sorted.Count / 2)
+        if ($sorted.Count % 2 -eq 1) { $median = $sorted[$mid] }
+        else { $median = ($sorted[$mid - 1] + $sorted[$mid]) / 2.0 }
+    }
+    return @{
+        sessions   = @($Rows).Count
+        requests   = $req
+        readM      = $readM
+        cost       = $cost
+        medianPeak = $median
+        perRequest = $(if ($req -gt 0) { $cost / $req } else { 0 })
+    }
+}
+
+function Format-Delta {
+    param([double]$Before, [double]$After)
+    if ($Before -eq 0) { return 'n/a' }
+    $pct = 100.0 * ($After - $Before) / $Before
+    if ($pct -ge 0) { return ('+{0:0}%' -f $pct) }
+    return ('{0:0}%' -f $pct)
 }
 
 try {
@@ -113,7 +155,7 @@ try {
     }
 
     if ($Json) {
-        Write-HookJson @{
+        $payload = @{
             sessions = @($rows)
             totals   = @{
                 cacheRead  = $tot.read
@@ -124,6 +166,11 @@ try {
                 costUSD    = [Math]::Round($tot.cost, 2)
             }
         }
+        if ($Baseline -and (Test-Path -LiteralPath $Baseline)) {
+            $bRowsJson = @(Import-Csv -LiteralPath $Baseline)
+            if ($bRowsJson.Count -gt 0) { $payload['baseline'] = (Get-Aggregate $bRowsJson) }
+        }
+        Write-HookJson $payload
         exit 0
     }
 
@@ -153,6 +200,37 @@ try {
     "  output       : `$$([Math]::Round($costOut, 0))"
     "  fresh input  : `$$([Math]::Round($costIn, 0))"
     ''
+    if ($Baseline) {
+        if (-not (Test-Path -LiteralPath $Baseline)) {
+            "baseline not found: $Baseline"
+        } else {
+            $bRows = @(Import-Csv -LiteralPath $Baseline)
+            $need = @('Requests', 'CacheReadM', 'PeakCtxK', 'CostUSD')
+            $missing = @()
+            if ($bRows.Count -gt 0) {
+                $cols = @($bRows[0].PSObject.Properties.Name)
+                $missing = @($need | Where-Object { $cols -notcontains $_ })
+            }
+            if ($bRows.Count -eq 0 -or $missing.Count -gt 0) {
+                "baseline unusable: expected columns $($need -join ', ')"
+            } else {
+                $b = Get-Aggregate $bRows
+                $n = Get-Aggregate $rows
+                "baseline comparison ($Baseline)"
+                '  metric              baseline          now      change'
+                "  sessions        {0,12} {1,12} {2,10}" -f $b.sessions, $n.sessions, (Format-Delta $b.sessions $n.sessions)
+                "  requests        {0,12:N0} {1,12:N0} {2,10}" -f $b.requests, $n.requests, (Format-Delta $b.requests $n.requests)
+                "  cache read (M)  {0,12:N0} {1,12:N0} {2,10}" -f $b.readM, $n.readM, (Format-Delta $b.readM $n.readM)
+                "  median peak (k) {0,12:N0} {1,12:N0} {2,10}" -f $b.medianPeak, $n.medianPeak, (Format-Delta $b.medianPeak $n.medianPeak)
+                "  cost (USD)      {0,12:N0} {1,12:N0} {2,10}" -f $b.cost, $n.cost, (Format-Delta $b.cost $n.cost)
+                "  cost / request  {0,12:N2} {1,12:N2} {2,10}" -f $b.perRequest, $n.perRequest, (Format-Delta $b.perRequest $n.perRequest)
+                ''
+                '  peak and cost/request are the signal; total cost also tracks how'
+                '  much work the week contained.'
+            }
+        }
+        ''
+    }
     'target: cache read share down, peak context down, cost per request down.'
 } catch {
     "audit failed: $($_.Exception.Message)"

@@ -85,6 +85,7 @@ by action:
   gear-low          12  ctx avg  142k  min  101k  max  210k
   escalate-prompt    9  ctx avg   48k  min   12k  max   96k
   hard-wrap          2  ctx avg  253k  min  251k  max  255k
+  compact-auto       1  ctx avg  300k  min  300k  max  300k
 ```
 
 - Many `gear-low` rows at small context: `minCtxForDownshift` is too low.
@@ -98,8 +99,19 @@ count.
 
 ## Comparing after a week
 
+```powershell
+powershell -NoProfile -File skills\opus-tuner\scripts\audit.ps1 -Recent 20 -Baseline baseline.csv
+```
+
+The report appends a before/after table: sessions, requests, cache read, median
+peak context, cost, and cost per request.
+
 1. Run the same command against the same `-Recent` window.
-2. Compare `PeakCtxK` and `CostUSD`, not raw token totals: a week with more work
-   should cost more.
+2. Compare `PeakCtxK` and `CostUSD` per request, not raw token totals: a week with
+   more work should cost more.
 3. Keep the CSV. Two snapshots beat one report, and the trend is the only signal
    that survives a change in what you were working on.
+
+Only compare against a CSV written by the current parser. The first version of
+`audit.ps1` double-counted every figure, so a baseline from it is exactly 2×
+wrong and the deltas will be meaningless.

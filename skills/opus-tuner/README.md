@@ -34,6 +34,7 @@ the defaults below.
 | `minCtxForDownshift` | 100000 | below this a gear-down never pays for its extra request |
 | `downshiftRequiresBulk` | true | below 200k, bulk wording must justify the extra request |
 | `hardWrap` | true | Stop hook refuses the stop once at the ceiling, forcing the brief |
+| `blockManualCompact` | true | PreCompact refuses the first manual `/compact` per session; auto is never blocked |
 | `logDecisions` | true | one row per decision in `state/tuner/decisions.csv` |
 | `deepPatterns` / `mechanicalPatterns` / `bulkPatterns` | regex | editable classification vocabulary |
 
@@ -50,13 +51,15 @@ the test suites stay away from a live install.
 | `post-tool.ps1` | PostToolUse / PostToolUseFailure | counts failures, tracks edited files, writes state only when a signal changed (it runs on every tool call). Matcher covers `Bash` **and** `PowerShell` — on Windows the shell tool is `PowerShell`, and missing it latches the repair-loop signal. |
 | `pre-tool.ps1` | PreToolUse (Read) | enforce mode only; refuses unbounded reads at the ceiling |
 | `stop.ps1` | Stop | two-stage banner; blocks the stop once at the ceiling to force the brief |
-| `session-start.ps1` | SessionStart | resets tier; re-seeds from `.claude/handoff.md` on `clear`, or on `startup` when the brief is under 24 h old |
+| `session-start.ps1` | SessionStart | resets tier; re-seeds from `.claude/handoff.md` on `clear`, or on `startup` when the brief is under 24 h old; warns (via `systemMessage`, 0 model tokens) about a malformed config and the cost of resuming a large session |
+| `pre-compact.ps1` | PreCompact | logs every compaction; blocks the first manual `/compact` per session. Auto is never blocked |
 | `brief.ps1` | manual (`/wrap`) | writes `.claude/handoff.md` from transcript facts |
 | `ctx.ps1` | manual | current context vs ceiling |
-| `audit.ps1` | manual | per-session cache read/write, output, peak context, cost |
+| `audit.ps1` | manual | per-session cache read/write, output, peak context, cost; `-Baseline x.csv` prints deltas |
 | `stats.ps1` | manual | what the tuner decided: actions, context at each, per day |
+| `doctor.ps1` | manual | install health check: hook wiring, config validity, skills, script parse, state writable |
 | `statusline.ps1` | status line | live `ctx/ceiling`, tier, effort, 5h and 7d windows |
-| `selftest.ps1` | manual / CI | 45 assertions against a synthetic transcript |
+| `selftest.ps1` | manual / CI | 56 assertions against a synthetic transcript |
 
 ## Hard wrap
 
@@ -76,6 +79,22 @@ Three limits keep it from becoming a trap:
 The block never runs `/clear` for you. It cannot — hooks cannot invoke slash
 commands — and clearing a session unattended would throw away work you may still
 be reading.
+
+## Compaction
+
+Compaction is the failure mode this bundle exists to replace, so it is watched
+rather than ignored. `pre-compact.ps1` receives `trigger: manual|auto` and does
+two things:
+
+- logs the event (`compact-manual`, `compact-auto`, or `compact-blocked`) with the
+  context size, so `stats.ps1` can count how often it happens;
+- refuses the **first** manual `/compact` per session (`nudged.compact`), with a
+  reason that points at `/wrap` then `/clear`. A second `/compact` proceeds.
+
+Automatic compaction is never blocked. If it fires to recover from a
+context-limit error the API already returned, blocking it surfaces that error and
+fails the request — worse than the compaction. `PreCompact` also discards
+`systemMessage`, which is why the log is the only reporting channel.
 
 ## Decision log
 
@@ -126,7 +145,7 @@ Two differences that matter:
 - **Reload after editing hooks.** The panel reads settings at session start. Use
   *Developer: Reload Window* (or restart the extension host), then check `/hooks`
   shows `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `Stop`,
-  `SessionStart` and `/skills` lists the five gear/handoff skills.
+  `SessionStart`, `PreCompact` and `/skills` lists the six skills.
 - **New conversations usually start as `startup`, not `clear`.** The panel's
   new-chat button does not always emit the `/clear` source, so
   `session-start.ps1` also re-seeds from `.claude/handoff.md` on `startup` when

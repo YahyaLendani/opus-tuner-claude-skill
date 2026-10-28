@@ -9,10 +9,10 @@ model and effort level you chose, but puts a ceiling on the two things that
 quietly dominate the bill: a context that grows without limit, and turns that
 re-read it for work that did not need it.
 
-Five hooks, a handoff skill, four effort gears, and a measuring tool. No network
+Six hooks, a handoff skill, four effort gears, and a measuring tool. No network
 calls, no API keys, no dependencies.
 
-> **Status:** 0.1.0. Windows PowerShell 5.1 is the supported runtime. Both suites
+> **Status:** 0.2.0. Windows PowerShell 5.1 is the supported runtime. Both suites
 > also run under `pwsh` 7 in CI (non-blocking); macOS and Linux are untested —
 > see [docs/troubleshooting.md](docs/troubleshooting.md).
 
@@ -47,6 +47,7 @@ or clear it for you.
 | **Grace band** | Between the routine ceiling and +25k the tier steps up to deep instead of interrupting a task that is nearly finished. |
 | **Effort gears** | `low` / `medium` / `xhigh` / `max` as one-turn skills. Default is `high` and costs nothing. The router only asks for a gear when the extra request pays for itself. |
 | **Handoff, not compaction** | `/wrap` writes a brief from transcript facts; `/clear` starts fresh at ~500 tokens. Cheaper than `/compact`, which pays a full context read to summarize. |
+| **Compaction is watched** | Every compaction is logged, and the first manual `/compact` in a session is refused once with a pointer to `/wrap` + `/clear`. Auto-compaction is never blocked. |
 | **Decision log** | One CSV row per decision (not per prompt), so “did the gears ever pay?” is answerable a week later. |
 | **Measurement** | `audit.ps1` reports per-session cache read/write, output, peak context, and cost. `stats.ps1` reports what the tuner decided. |
 
@@ -57,11 +58,12 @@ or clear it for you.
 | `UserPromptSubmit` | `route.ps1` | Classifies the prompt, escalates the tier, picks a gear. |
 | `Stop` | `stop.ps1` | 70% warning, hard wrap at the ceiling, grace escalation. |
 | `PostToolUse` / `PostToolUseFailure` | `post-tool.ps1` | Counts consecutive failures and edited files (async; writes only on change). |
-| `SessionStart` | `session-start.ps1` | Resets the tier; re-seeds from the handoff brief. |
+| `SessionStart` | `session-start.ps1` | Resets the tier; re-seeds from the handoff brief; warns about a config typo and the cost of resuming a large session. |
+| `PreCompact` | `pre-compact.ps1` | Logs every compaction; refuses the first manual `/compact` per session. Never blocks auto. |
 | `PreToolUse` *(optional)* | `pre-tool.ps1` | In `enforce` mode, refuses unbounded `Read`s at the ceiling. |
 
-Everything except the hard wrap is advisory. Hooks fail open: an error exits 0
-and Claude Code continues.
+Everything except the hard wrap and the first manual `/compact` is advisory.
+Hooks fail open: an error exits 0 and Claude Code continues.
 
 ## Install
 
@@ -77,7 +79,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 The installer:
 
 - copies the six skills into `~/.claude/skills/` (or `$env:CLAUDE_CONFIG_DIR`);
-- merges five hook events into `~/.claude/settings.json`, **keeping your existing
+- merges six hook events into `~/.claude/settings.json`, **keeping your existing
   hooks** and backing the file up first;
 - adds a status line, unless you already have one;
 - appends a marked token-discipline block to `~/.claude/CLAUDE.md`.
@@ -97,16 +99,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
 ## Verify
 
 ```powershell
-# 45 assertions: routing, hard wrap, handoff round trip, decision log, timing
-# (44 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
+# 56 assertions: routing, hard wrap, compaction, handoff round trip, audit, timing
+# (55 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
-# 38 assertions: install/upgrade/uninstall against a sandbox config dir
+# 43 assertions: install/upgrade/uninstall against a sandbox config dir
 powershell -NoProfile -File tests\install-test.ps1
+
+# is the install healthy? hooks registered, scripts present, config valid
+powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1
 ```
 
 In Claude Code, `/hooks` should list `UserPromptSubmit`, `PostToolUse`,
-`PostToolUseFailure`, `Stop`, `SessionStart`; `/skills` should list
+`PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact`; `/skills` should list
 `opus-tuner`, `gear-low`, `gear-medium`, `gear-xhigh`, `gear-max`, `wrap`.
 
 ## Configure
@@ -119,12 +124,14 @@ Defaults live in the scripts and are overridden by
   "mode": "advise",
   "routineTokens": 150000,
   "deepTokens": 250000,
-  "hardWrap": true
+  "hardWrap": true,
+  "blockManualCompact": true
 }
 ```
 
 - `mode`: `advise` (default), `enforce` (adds the read guard), `off` (silent).
 - `hardWrap`: `false` restores the banner-only behaviour.
+- `blockManualCompact`: `false` logs `/compact` without ever refusing it.
 - Ceilings: lower them if you routinely hit the weekly limit; raise the routine
   one if you spend most of a session below it.
 
@@ -136,14 +143,19 @@ Every knob is documented in [docs/configuration.md](docs/configuration.md).
 # per-session tokens and API-equivalent cost, newest 20 sessions
 powershell -NoProfile -File skills\opus-tuner\scripts\audit.ps1 -Recent 20
 
+# compare against a CSV captured before tuning
+powershell -NoProfile -File skills\opus-tuner\scripts\audit.ps1 -Recent 20 -Baseline baseline.csv
+
 # what the router decided, last 7 days
 powershell -NoProfile -File skills\opus-tuner\scripts\stats.ps1 -Days 7
 ```
 
-Take a baseline **before** tuning, then compare `PeakCtxK` and `CostUSD` after a
-week. Peak context should fall first; cost per request falls last, because cache
-write and output do not scale with context the way cache read does.
-[docs/measuring.md](docs/measuring.md) explains the method and the traps.
+Take a baseline **before** tuning (`audit.ps1 -Csv baseline.csv`), then pass it
+back with `-Baseline` after a week: the report prints peak context, cache read and
+cost per request as a before/after table. Peak context should fall first; cost per
+request falls last, because cache write and output do not scale with context the
+way cache read does. [docs/measuring.md](docs/measuring.md) explains the method
+and the traps.
 
 ## Uninstall
 

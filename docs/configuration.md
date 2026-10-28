@@ -22,6 +22,7 @@ If `CLAUDE_CONFIG_DIR` is set, the file is read from `$CLAUDE_CONFIG_DIR` instea
   "minCtxForDownshift": 100000,
   "downshiftRequiresBulk": true,
   "hardWrap": true,
+  "blockManualCompact": true,
   "logDecisions": true,
   "deepPatterns": "refactor|architect|root cause|race condition|deadlock|migrat|redesign|why does|why is|why did|flaky|intermittent|investigate|prove|optimi[sz]|memory leak|performance|concurren|thread-safe|vulnerab|rewrite|overhaul|regression",
   "mechanicalPatterns": "rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license",
@@ -85,6 +86,26 @@ set. Set it to `false` to keep the banner without ever refusing a stop.
 The block does not clear your session. It asks the model to run `/wrap`; pressing
 `/clear` remains your action.
 
+## Compaction
+
+| Key | Default | Effect |
+|---|---|---|
+| `blockManualCompact` | `true` | refuse the first manual `/compact` per session |
+
+The bundle's argument is that a handoff plus `/clear` beats `/compact`: compaction
+pays a full context read to write a summary, and that summary is then re-read on
+every later request. So the first `/compact` in a session is refused once, with a
+reason that points at `/wrap` and `/clear`. Running `/compact` again proceeds —
+a nudge, not a wall.
+
+Auto-compaction is **never** blocked. When it fires to recover from a
+context-limit error the API already returned, blocking it surfaces that error and
+fails the request. Every compaction, manual or auto, is still recorded in the
+decision log (`compact-manual`, `compact-auto`, `compact-blocked`), so `stats.ps1`
+can tell you how often the thing this bundle exists to avoid actually happens.
+
+`"blockManualCompact": false` keeps the logging and drops the block.
+
 ## Gear routing
 
 | Key | Default | Effect |
@@ -133,6 +154,19 @@ Disable it if you do not want the file; nothing else reads it.
 
 The last two exist for the test suites and for experiments. They are not needed
 in normal use.
+
+## Diagnosing
+
+```powershell
+powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\doctor.ps1"
+```
+
+Checks that the hooks are registered and their scripts exist, that the config
+parses, that `routineTokens < deepTokens < autoCompactWindow`, that all six skills
+are installed with matching `name:` frontmatter, that every script parses, and
+that the state directory is writable. Exit code 0 means healthy; `-Json` gives the
+same result as machine-readable output. `-Root <dir>` checks a different config
+dir.
 
 ## Optional: trimming skill descriptions
 

@@ -1,13 +1,13 @@
 # Architecture
 
-opus-tuner is five hooks, a small state file, and a set of CLI scripts. There is
+opus-tuner is six hooks, a small state file, and a set of CLI scripts. There is
 no daemon, no database, and no network access.
 
 ## Lifecycle
 
 ```
 session start
-    │  session-start.ps1   reset tier; re-seed brief on /clear or fresh startup
+    │  session-start.ps1   reset tier · re-seed brief · config and resume warnings
     ▼
 user prompt
     │  route.ps1           classify → escalate tier → pick gear
@@ -20,6 +20,8 @@ response ends
     ▼
    /wrap  →  brief written
    /clear →  next session starts from the brief
+
+   /compact (any time) → pre-compact.ps1   log it · refuse the first manual one
 ```
 
 The optional `PreToolUse` hook sits between the prompt and the tool call and can
@@ -39,16 +41,21 @@ uses:
 | `stop_hook_active` | `stop` — loop protection |
 | `tool_name`, `tool_input` | `post-tool`, `pre-tool` |
 | `cwd`, `source` | `session-start` — where the brief lives |
+| `trigger` | `pre-compact` — `manual` or `auto` |
+| `seconds_since_last_response` | `session-start` — not used, but available on resume |
 
 | Output shape | Event | Effect |
 |---|---|---|
 | `hookSpecificOutput.additionalContext` | UserPromptSubmit, SessionStart | text enters the model's context |
 | `decision: "block"` + `reason` | Stop | refuses the stop; the reason is shown to the model |
-| `systemMessage` | Stop | shown to the user, **not** the model |
+| `decision: "block"` + `reason` | PreCompact | refuses the compaction |
+| `systemMessage` | Stop, SessionStart | shown to the user, **not** the model |
 | `hookSpecificOutput.permissionDecision` | PreToolUse | allow/deny a tool call |
 
 Banners go through `systemMessage` on purpose: a warning that costs tokens on
-every response defeats the point of the tool.
+every response defeats the point of the tool. `PreCompact` discards
+`systemMessage` entirely, which is why compaction is reported through the decision
+log instead.
 
 ## Context measurement
 
@@ -92,7 +99,8 @@ One JSON file per session: `~/.claude/state/tuner/<session_id>.json`.
     "soft": false,
     "ceiling": false,
     "escalated": false,
-    "hardWrap": false
+    "hardWrap": false,
+    "compact": false
   },
   "updated": "2026-10-28T10:35:26.3511815+01:00"
 }
@@ -103,7 +111,8 @@ One JSON file per session: `~/.claude/state/tuner/<session_id>.json`.
 - `fails` counts consecutive tool failures, capped at 9.
 - `maxUses` rations `gear-max` per session.
 - `nudged` makes each banner fire once per crossing. `hardWrap` is the one-shot
-  guard for the blocking Stop decision.
+  guard for the blocking Stop decision, `compact` the one-shot guard for the
+  blocking PreCompact decision.
 - `updated` is written on every state change, which makes it a cheap liveness
   signal when checking that hooks are actually running.
 

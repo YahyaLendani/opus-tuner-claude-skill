@@ -38,9 +38,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File skills\opus-tuner\scripts\se
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\install-test.ps1
 ```
 
-Both must pass with 0 failures. The self-test is sandboxed through
-`OPUS_TUNER_STATE`; the installer test uses a throwaway `CLAUDE_CONFIG_DIR`. If
-you add a hook or a config key, add an assertion for it.
+Both must pass with 0 failures (currently 56 and 43 assertions). The self-test is
+sandboxed through `OPUS_TUNER_STATE`; the installer test uses a throwaway
+`CLAUDE_CONFIG_DIR`. If you add a hook or a config key, add an assertion for it,
+and update the expected counts in `README.md` and `CHANGELOG.md` when they change.
+
+If a suite fails and the cause is not obvious, `doctor.ps1` names the broken link
+in a live install:
+
+```powershell
+powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\doctor.ps1"
+```
 
 Also check that every script still parses:
 

@@ -2,11 +2,21 @@
 
 ## Hooks do not fire
 
+0. **Run the doctor.** It checks the whole wiring in one command:
+
+   ```powershell
+   powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\doctor.ps1"
+   ```
+
+   Exit code 0 means healthy. It names the specific break: a hook pointing at a
+   missing script, a config that does not parse, a skill folder without a matching
+   `name:`, or an unwritable state directory.
+
 1. **Reload.** Claude Code reads hook configuration at session start. Restart it,
    or use *Developer: Reload Window* in VS Code.
 2. Check `/hooks`. You should see `UserPromptSubmit`, `PostToolUse`,
-   `PostToolUseFailure`, `Stop`, `SessionStart` (and `PreToolUse` only with
-   `-Enforce`).
+   `PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact` (and `PreToolUse`
+   only with `-Enforce`).
 3. Confirm the paths in `~/.claude/settings.json` exist. The installer writes
    absolute paths; moving `~/.claude` or restoring settings from another machine
    breaks them. Re-run `install.ps1 -Force`.
