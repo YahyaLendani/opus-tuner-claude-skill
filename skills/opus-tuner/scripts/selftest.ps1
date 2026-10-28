@@ -18,7 +18,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 
-$sandbox = Join-Path $env:TEMP ('opus-tuner-selftest-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ('opus-tuner-selftest-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $sandbox | Out-Null
 # Keep every state file and decision row out of the live directories. This has to
 # be set before _common.ps1 is loaded, because it captures the path at dot-source.
@@ -29,7 +29,7 @@ New-Item -ItemType Directory -Force -Path $env:OPUS_TUNER_STATE | Out-Null
 
 # Guard: if the isolation override did not take effect, every hook below would
 # write fake sessions into the live state directory. Refuse rather than litter.
-$liveState = Join-Path $script:TunerRoot 'state\tuner'
+$liveState = Join-Path (Join-Path $script:TunerRoot 'state') 'tuner'
 if ($script:TunerState -eq $liveState) {
     Write-Host 'refusing to run: OPUS_TUNER_STATE was not set before _common.ps1 was loaded' -ForegroundColor Red
     exit 1
@@ -38,6 +38,11 @@ if ($script:TunerState -eq $liveState) {
 if ([string]::IsNullOrWhiteSpace($Interpreter)) {
     $Interpreter = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
 }
+
+# -ExecutionPolicy only exists on Windows. Passing it to pwsh on macOS or Linux
+# fails before the script runs, so build the prefix once.
+$script:ExePrefix = @('-NoProfile')
+if ($script:OnWindows) { $script:ExePrefix += @('-ExecutionPolicy', 'Bypass') }
 
 $startedAt = (Get-Date).AddSeconds(-1)
 
@@ -60,7 +65,7 @@ function Check {
 function Invoke-Hook {
     param([string]$Script, [string]$Payload)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $out = $Payload | & $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here $Script) 2>&1
+    $out = $Payload | & $Interpreter @ExePrefix -File (Join-Path $here $Script) 2>&1
     $sw.Stop()
     $text = ($out | Where-Object { $_ -is [string] }) -join "`n"
     return @{ text = $text.Trim(); ms = $sw.ElapsedMilliseconds }
@@ -309,8 +314,8 @@ Check 'advise mode never blocks a read' ($r.text.Length -eq 0) $r.text
 Write-Host ''
 Write-Host 'handoff round trip' -ForegroundColor Yellow
 
-$briefOut = (& $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'brief.ps1') -Cwd $sandbox -Transcript $large) -join "`n"
-$briefPath = Join-Path $sandbox '.claude\handoff.md'
+$briefOut = (& $Interpreter @ExePrefix -File (Join-Path $here 'brief.ps1') -Cwd $sandbox -Transcript $large) -join "`n"
+$briefPath = Join-Path (Join-Path $sandbox '.claude') 'handoff.md'
 Check 'brief.ps1 writes .claude/handoff.md' (Test-Path $briefPath) $briefOut
 if (Test-Path $briefPath) {
     $t = Get-Content $briefPath -Raw
@@ -322,7 +327,7 @@ if (Test-Path $briefPath) {
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'clear re-seeds from the brief' ($r.text -match 'Resuming from a handoff') $r.text.Substring(0, [Math]::Min(120, $r.text.Length))
-Check 'brief consumed after re-seed' (-not (Test-Path $briefPath) -and (Test-Path (Join-Path $sandbox '.claude\handoff.consumed.md')))
+Check 'brief consumed after re-seed' (-not (Test-Path $briefPath) -and (Test-Path (Join-Path (Join-Path $sandbox '.claude') 'handoff.consumed.md')))
 
 # The VS Code panel often starts a new conversation as 'startup', not 'clear'.
 Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nrun the tests" -Encoding UTF8
@@ -420,7 +425,7 @@ if (Test-Path -LiteralPath $logPath) {
     Check 'compaction events logged' ($compacts -ge 3) "rows=$compacts"
 }
 
-$stats = & $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'stats.ps1') -All 2>&1
+$stats = & $Interpreter @ExePrefix -File (Join-Path $here 'stats.ps1') -All 2>&1
 $statsText = ($stats | Where-Object { $_ -is [string] }) -join "`n"
 Check 'stats.ps1 summarizes the log' ($statsText -match 'by action' -and $statsText -match 'hard-wrap') $statsText.Substring(0, [Math]::Min(200, $statsText.Length))
 
@@ -430,7 +435,7 @@ Write-Host 'audit baseline comparison' -ForegroundColor Yellow
 
 # audit.ps1 reads <config>/projects, so give it a sandbox transcript of its own
 # rather than pointing at whatever the developer has been working on.
-$proj = Join-Path $sandbox 'projects\p1'
+$proj = Join-Path (Join-Path $sandbox 'projects') 'p1'
 New-Item -ItemType Directory -Force -Path $proj | Out-Null
 $u = '{"type":"assistant","message":{"model":"claude-opus-5-5","role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":120000,"cache_creation_input_tokens":0,"output_tokens":300}}}'
 $pad = ('{"type":"cost-state","sessionId":"x","totalCostUSD":0.1}' + "`n") * 300
@@ -445,7 +450,7 @@ $baseCsv = Join-Path $sandbox 'baseline.csv'
 
 $oldCfgDir = $env:CLAUDE_CONFIG_DIR
 $env:CLAUDE_CONFIG_DIR = $sandbox
-$auditOut = (& $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'audit.ps1') -Recent 0 -Baseline $baseCsv) -join "`n"
+$auditOut = (& $Interpreter @ExePrefix -File (Join-Path $here 'audit.ps1') -Recent 0 -Baseline $baseCsv) -join "`n"
 $env:CLAUDE_CONFIG_DIR = $oldCfgDir
 
 Check 'audit prints a baseline comparison' ($auditOut -match 'baseline comparison') $auditOut

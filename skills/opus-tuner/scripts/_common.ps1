@@ -6,8 +6,16 @@ $ErrorActionPreference = 'Stop'
 # Follow Claude Code's own config-dir relocation when it is set. A sandboxed
 # install (CLAUDE_CONFIG_DIR=C:\temp\sandbox) then reads its own config and
 # state instead of the real ones, which is what makes the test suite safe.
-$script:TunerRoot   = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
-$script:TunerState  = Join-Path $script:TunerRoot 'state\tuner'
+#
+# One codebase, three platforms. Windows PowerShell 5.1 and pwsh 7 differ in two
+# places only: where home is, and how paths are joined. Resolve both here so no
+# hook has to care.
+$script:OnWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+$script:HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE }
+                  elseif ($env:HOME) { $env:HOME }
+                  else { [System.Environment]::GetFolderPath('UserProfile') }
+$script:TunerRoot   = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $script:HomeDir '.claude' }
+$script:TunerState  = Join-Path (Join-Path $script:TunerRoot 'state') 'tuner'
 $script:TunerConfig = Join-Path $script:TunerRoot 'tuner.config.json'
 # Tests and experiments can point at a different config without touching the live
 # one. Nothing else reads this, and unset behaves exactly as before.

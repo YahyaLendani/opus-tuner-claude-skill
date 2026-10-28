@@ -15,7 +15,14 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $install = Join-Path $repo 'install.ps1'
 $uninstall = Join-Path $repo 'uninstall.ps1'
-$sandbox = Join-Path $env:TEMP ('opus-tuner-install-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ('opus-tuner-install-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+
+# Run child scripts with the interpreter that is running this test, so the
+# Windows 5.1 job exercises 5.1 and the POSIX jobs exercise pwsh.
+$OnWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+$Interpreter = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }
+$ExePrefix = @('-NoProfile')
+if ($OnWindows) { $ExePrefix += @('-ExecutionPolicy', 'Bypass') }
 
 $pass = 0
 $fail = 0
@@ -92,8 +99,20 @@ try {
     Check 'PostToolUse hook is async' ([bool]$s.hooks.PostToolUse[0].hooks[0].async -or [bool]$s.hooks.PostToolUse[1].hooks[0].async)
     Check 'settings backup created' (@(Get-ChildItem $sandbox -Filter 'settings.json.bak-*').Count -ge 1)
 
+    # The hook command is the one line that differs by platform. Asserting it
+    # here is what catches a POSIX port that still points at PowerShell 5.1.
+    # Stop[0] is the user's hook, so find ours by its path.
+    $ourStop = @(@($s.hooks.Stop) | Where-Object {
+        (@($_.hooks | ForEach-Object { [string]$_.command }) -join ' ') -match 'opus-tuner'
+    })[0].hooks[0]
+    if ($OnWindows) {
+        Check 'hooks run through PowerShell' ($ourStop.command -match '^& "' -and $ourStop.shell -eq 'powershell') $ourStop.command
+    } else {
+        Check 'hooks run through pwsh' ($ourStop.command -match '^pwsh -NoProfile -File "' -and $ourStop.shell -eq 'bash') $ourStop.command
+    }
+
     $skills = @(Get-ChildItem (Join-Path $sandbox 'skills') -Directory)
-    Check 'six skills installed' ($skills.Count -eq 6) "count $($skills.Count)"
+    Check 'seven skills installed' ($skills.Count -eq 7) "count $($skills.Count)"
     $md = Get-Content (Join-Path $sandbox 'CLAUDE.md') -Raw
     Check 'CLAUDE.md keeps user content' ($md -match 'keep me')
     Check 'CLAUDE.md gains the block' ($md -match '<!-- opus-tuner:begin -->')
@@ -114,19 +133,19 @@ try {
     $s = Read-Settings $sandbox
     Check '-Force replaces the status line' ($s.statusLine.command -match 'statusline\.ps1') $s.statusLine.command
     Check '-Force still keeps user hooks' ((Count-User $s 'Stop' 'mine.ps1') -eq 1)
-    Check 'replaced skill folder backed up outside skills/' (@(Get-ChildItem (Join-Path $sandbox 'state\opus-tuner-backups') -Directory -ErrorAction SilentlyContinue).Count -ge 1)
+    Check 'replaced skill folder backed up outside skills/' (@(Get-ChildItem (Join-Path (Join-Path $sandbox 'state') 'opus-tuner-backups') -Directory -ErrorAction SilentlyContinue).Count -ge 1)
     Check 'no backup folders inside skills/' (@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory -Filter '*.bak-*').Count -eq 0)
 
     # ---------- doctor ----------
     Write-Host ''
     Write-Host 'doctor' -ForegroundColor Yellow
-    $doctor = Join-Path $sandbox 'skills\opus-tuner\scripts\doctor.ps1'
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $doctor | Out-Null
+    $doctor = Join-Path (Join-Path (Join-Path (Join-Path $sandbox 'skills') 'opus-tuner') 'scripts') 'doctor.ps1'
+    & $Interpreter @ExePrefix -File $doctor | Out-Null
     Check 'doctor reports a healthy install' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
 
     $badCfg = Join-Path $sandbox 'tuner.config.json'
     [System.IO.File]::WriteAllText($badCfg, '{ "routineTokens": 150000,', (New-Object System.Text.UTF8Encoding($false)))
-    $docOut = (& powershell -NoProfile -ExecutionPolicy Bypass -File $doctor 2>&1) -join "`n"
+    $docOut = (& $Interpreter @ExePrefix -File $doctor 2>&1) -join "`n"
     Check 'doctor catches a malformed config' ($LASTEXITCODE -eq 1) "exit $LASTEXITCODE"
     Check 'doctor names the bad config' ($docOut -match 'tuner\.config\.json') $docOut
     Remove-Item -LiteralPath $badCfg -Force
@@ -141,7 +160,7 @@ try {
     }
     Check "user's Stop hook survives uninstall" ((Count-User $s 'Stop' 'mine.ps1') -eq 1)
     Check 'our status line removed' (-not $s.statusLine)
-    Check 'all six skill folders removed' (@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory -ErrorAction SilentlyContinue).Count -eq 0) "left: $(@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory).Name -join ',')"
+    Check 'all seven skill folders removed' (@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory -ErrorAction SilentlyContinue).Count -eq 0) "left: $(@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory).Name -join ',')"
     $md = Get-Content (Join-Path $sandbox 'CLAUDE.md') -Raw
     Check 'CLAUDE.md keeps user content after uninstall' ($md -match 'keep me')
     Check 'CLAUDE.md block removed' (-not ($md -match 'opus-tuner:begin'))
@@ -165,8 +184,20 @@ try {
     $env:CLAUDE_CONFIG_DIR = $fresh
     & $install -DryRun | Out-Null
     Check 'dry run writes no settings' (-not (Test-Path (Join-Path $fresh 'settings.json')))
-    Check 'dry run writes no skills' (-not (Test-Path (Join-Path $fresh 'skills\opus-tuner')))
+    Check 'dry run writes no skills' (-not (Test-Path (Join-Path (Join-Path $fresh 'skills') 'opus-tuner')))
     Check 'dry run writes no CLAUDE.md' (-not (Test-Path (Join-Path $fresh 'CLAUDE.md')))
+
+    # ---------- advisory mode ----------
+    Write-Host ''
+    Write-Host 'install -NoHooks (advisory mode)' -ForegroundColor Yellow
+    $advisory = Join-Path $sandbox 'advisory'
+    New-Item -ItemType Directory -Force -Path $advisory | Out-Null
+    $env:CLAUDE_CONFIG_DIR = $advisory
+    & $install -NoHooks | Out-Null
+    Check 'advisory mode exits 0' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
+    Check 'advisory mode writes no settings.json' (-not (Test-Path (Join-Path $advisory 'settings.json')))
+    Check 'advisory mode still installs skills' (Test-Path (Join-Path (Join-Path $advisory 'skills') 'opus-tuner'))
+    Check 'advisory mode still writes CLAUDE.md' ((Get-Content (Join-Path $advisory 'CLAUDE.md') -Raw) -match 'opus-tuner:begin')
 } finally {
     $env:CLAUDE_CONFIG_DIR = $oldConfigDir
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue

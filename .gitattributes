@@ -1,6 +1,6 @@
-# Normalise line endings so a Windows clone and a Linux CI runner agree.
-# PowerShell scripts keep CRLF (native, and safest for here-strings).
-* text=auto
-*.ps1 text eol=crlf
-*.yml text eol=lf
-*.md  text eol=lf
+# Shell scripts must keep LF even when the repo is checked out on Windows:
+# a CRLF shebang does not run on macOS or Linux.
+*.sh text eol=lf
+
+# PowerShell is happy with either, but the test fixtures compare file content.
+*.ps1 text

@@ -67,7 +67,11 @@ conversation can.
 ## Reading the audit
 
 ```
+# Windows
 powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\audit.ps1" -Recent 20
+
+# macOS / Linux
+pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/audit.ps1" -Recent 20
 ```
 
 If `CLAUDE_CONFIG_DIR` is set, substitute it for `~/.claude` in that path.

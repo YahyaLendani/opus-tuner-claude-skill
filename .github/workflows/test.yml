@@ -38,8 +38,8 @@ jobs:
         shell: powershell
         run: ./tests/install-test.ps1
 
-  pwsh-experimental:
-    name: pwsh 7 (experimental, non-blocking)
+  windows-pwsh-7:
+    name: Windows pwsh 7 (non-blocking)
     runs-on: windows-latest
     continue-on-error: true
     steps:
@@ -52,3 +52,52 @@ jobs:
       - name: Installer test under pwsh
         shell: pwsh
         run: ./tests/install-test.ps1
+
+  posix:
+    name: ${{ matrix.os }} (pwsh 7)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: pwsh version
+        shell: pwsh
+        run: $PSVersionTable.PSVersion.ToString()
+
+      - name: Every script parses
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs)
+            if ($errs) {
+              Write-Host "parse error: $($_.FullName)"
+              $errs | ForEach-Object { Write-Host "  $($_.Message)" }
+              $bad++
+            }
+          }
+          if ($bad -gt 0) { exit 1 }
+
+      - name: Self-test
+        shell: pwsh
+        run: ./skills/opus-tuner/scripts/selftest.ps1 -Interpreter pwsh -BudgetMs 3000
+
+      - name: Installer test
+        shell: pwsh
+        run: ./tests/install-test.ps1
+
+      - name: install.sh wrapper (executable, LF, passes switches)
+        shell: bash
+        run: |
+          set -eu
+          test -x install.sh
+          export CLAUDE_CONFIG_DIR="$(mktemp -d)"
+          ./install.sh -DryRun | grep -q 'dry run complete'
+          ./install.sh -NoHooks >/dev/null
+          test -d "$CLAUDE_CONFIG_DIR/skills/opus-tuner"
+          test -f "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+          test ! -f "$CLAUDE_CONFIG_DIR/settings.json"

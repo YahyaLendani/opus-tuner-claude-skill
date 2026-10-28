@@ -5,25 +5,37 @@ PowerShell scripts, no dependencies, and a test suite that must stay green.
 
 ## Ground rules
 
-- **Windows PowerShell 5.1 must keep working.** That is the supported runtime.
-  Do not use `??`, `-Parallel`, ternary `? :`, or other PowerShell 7-only syntax.
+- **Windows PowerShell 5.1 must keep working.** It is the default runtime on
+  Windows and the job that blocks CI. Do not use `??`, `-Parallel`, ternary
+  `? :`, or other PowerShell 7-only syntax.
+- **`pwsh` 7 must keep working too.** macOS and Linux run the same scripts under
+  PowerShell 7. Use `$script:OnWindows` and `$script:HomeDir` from `_common.ps1`
+  instead of `$env:USERPROFILE`, and never write a backslash path literal: nest
+  `Join-Path` calls (`Join-Path (Join-Path $root 'state') 'tuner'`). A single
+  `'state\tuner'` is one filename on POSIX.
 - **No dependencies.** Standard library and Windows built-ins only. Do not add
-  modules, Pester, npm, or a build step.
+  modules, Pester, npm, or a build step. `pwsh` is the one runtime prerequisite,
+  and only outside Windows.
 - **No network calls.** This tool exists to be auditable.
 - **Fail open.** A hook that throws must still exit 0, or it can strand a
   session. Wrap hook bodies in `try { } catch { }`.
 - **Zero tokens when idle.** Anything injected into the model's context must
   justify its cost. Banners go to `systemMessage`, not `additionalContext`.
+- **`-ExecutionPolicy` is Windows-only.** Never pass it to `pwsh` on macOS or
+  Linux; it fails before the script runs. Build an `$ExePrefix` the way
+  `selftest.ps1` does.
 
 ## Layout
 
 ```
 skills/opus-tuner/scripts/   hooks and the CLI scripts
 skills/opus-tuner/           SKILL.md + reference docs
+skills/claude-skill/         portable, hook-free skill for Desktop / claude.ai
 skills/gear-*/               one-turn effort skills
 skills/wrap/                 the handoff skill
 tests/                       installer integration test
 install.ps1 / uninstall.ps1
+install.sh                   POSIX wrapper around install.ps1
 ```
 
 `skills/` mirrors the install target, so a cloned repo can be installed with one
@@ -31,34 +43,65 @@ command and the paths in `settings.json` stay relative to the config dir.
 
 ## Before opening a PR
 
-Run both suites from the repo root:
+Run both suites from the repo root. On Windows:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File skills\opus-tuner\scripts\selftest.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\install-test.ps1
 ```
 
-Both must pass with 0 failures (currently 57 and 43 assertions). The self-test is
+On macOS or Linux, the same scripts with `pwsh`:
+
+```sh
+pwsh -NoProfile -File skills/opus-tuner/scripts/selftest.ps1
+pwsh -NoProfile -File tests/install-test.ps1
+```
+
+Both must pass with 0 failures (currently 57 and 48 assertions). The self-test is
 sandboxed through `OPUS_TUNER_STATE`; the installer test uses a throwaway
 `CLAUDE_CONFIG_DIR`. If you add a hook or a config key, add an assertion for it,
 and update the expected counts in `README.md` and `CHANGELOG.md` when they change.
+
+`selftest.ps1` also exercises the Windows 5.1 path and the `pwsh` path when both
+are present: pass `-Interpreter powershell` or `-Interpreter pwsh` to pick one.
 
 If a suite fails and the cause is not obvious, `doctor.ps1` names the broken link
 in a live install:
 
 ```powershell
+# Windows
 powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\doctor.ps1"
 ```
 
-Also check that every script still parses:
+```sh
+# macOS / Linux
+pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/doctor.ps1"
+```
+
+Also check that every script still parses (works on either interpreter):
 
 ```powershell
-Get-ChildItem skills\opus-tuner\scripts\*.ps1 | ForEach-Object {
+Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
     $e = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e)
     if ($e) { "$($_.Name): $($e[0].Message)" }
 }
 ```
+
+## CI
+
+`.github/workflows/test.yml` runs three jobs:
+
+| Job | What it proves | Blocking |
+|---|---|---|
+| `windows-powershell-51` | parse, self-test, installer test on 5.1 | yes |
+| `windows-pwsh-7` | the same on `pwsh` 7 | no — startup timing varies |
+| `posix` (Ubuntu + macOS) | parse, self-test, installer test, and `install.sh` under `bash` | yes |
+
+The POSIX job is the only place `install.sh` is executed. It asserts that the
+file is executable, that the shebang survives checkout (`.gitattributes` pins
+`*.sh` to LF), and that `-NoHooks` writes skills and `CLAUDE.md` but no
+`settings.json`. If you change the installer's switches, update that step.
 
 ## Style
 

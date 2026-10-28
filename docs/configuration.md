@@ -160,15 +160,24 @@ in normal use.
 ## Diagnosing
 
 ```powershell
+# Windows
 powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\doctor.ps1"
 ```
 
+```sh
+# macOS / Linux
+pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/doctor.ps1"
+```
+
 Checks that the hooks are registered and their scripts exist, that the config
-parses, that `routineTokens < deepTokens < autoCompactWindow`, that all six skills
-are installed with matching `name:` frontmatter, that every script parses, and
-that the state directory is writable. Exit code 0 means healthy; `-Json` gives the
-same result as machine-readable output. `-Root <dir>` checks a different config
-dir.
+parses, that `routineTokens < deepTokens < autoCompactWindow`, that all seven
+skills are installed with matching `name:` frontmatter, that every script parses,
+that the state directory is writable, and — on POSIX — that `pwsh` is on `PATH`.
+Exit code 0 means healthy; `-Json` gives the same result as machine-readable
+output. `-Root <dir>` checks a different config dir.
+
+In `-NoHooks` (advisory) mode the hook checks report "no hooks registered" rather
+than failing, because that is the intended state.
 
 ## Optional: trimming skill descriptions
 

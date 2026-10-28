@@ -157,3 +157,48 @@ JSON object.
 **Consequence.** The warnings are free but also invisible to the model, so they
 cannot change its behaviour — only the user's. That is the right trade for a
 message whose whole purpose is to inform a decision the model does not make.
+
+## 13. `pwsh` 7 on macOS and Linux
+
+**Context.** The bundle was Windows-only: `$env:USERPROFILE`, `'state\tuner'`
+literals, `shell: "powershell"`, and `-ExecutionPolicy` in every command. Claude
+Code on macOS and Linux starts command hooks with `sh`, so something has to name
+an interpreter. The two options were a second implementation in bash, or one
+PowerShell codebase with a runtime dependency.
+
+**Decision.** Keep one codebase and require **PowerShell 7 (`pwsh`)** outside
+Windows. Resolve the three differences — home directory, path separator,
+interpreter — in `_common.ps1` and `install.ps1`, and write `pwsh -NoProfile -File
+"<path>"` with `shell: "bash"` on POSIX. Ship a thin `install.sh` that checks for
+`pwsh` and passes every switch through.
+
+**Consequence.** macOS and Linux users install a 60 MB runtime before the bundle
+works, and a missing `pwsh` makes hooks fail silently — so `doctor.ps1` checks for
+it explicitly there. In exchange there is no second set of hooks to keep in sync,
+and every fix lands on all three platforms at once. A bash rewrite was rejected
+because it would duplicate the classifier, the context reader and the state
+machine, and because it would add Shell to the repository's language bar for a
+few hundred lines of wrapper. The POSIX path is validated only by CI; the
+development machine has no `pwsh` by choice.
+
+## 14. A portable skill, and an advisory install mode
+
+**Context.** Two audiences cannot use the hooks: people on claude.ai or the plain
+Desktop chat, where hooks do not exist, and people on managed machines where
+`settings.json` cannot be modified. Both were told to "use Claude Code instead",
+which is not an answer.
+
+**Decision.** Ship two fallbacks that share the same rules as prose:
+
+- `skills/claude-skill/SKILL.md` — a self-contained, advisory skill for any
+  Claude client, installed alongside the others so it appears in `/skills` too;
+- `install.ps1 -NoHooks` — installs the skills and the `CLAUDE.md` block, and
+  never reads or writes `settings.json`.
+
+**Consequence.** The fallbacks cannot measure or enforce anything, and they say so
+in their own text rather than letting the model imply otherwise. `-NoHooks`
+deliberately leaves an earlier hook install alone except for a warning, because
+silently deleting wiring the user did not ask to remove is worse than a stale
+hook. The portable skill is one more folder to keep aligned with the scripts; the
+`CLAUDE.md` block and `SKILL.md` are the two places where a rules change must be
+mirrored.

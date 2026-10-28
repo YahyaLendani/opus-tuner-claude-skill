@@ -2,19 +2,21 @@
 
 [![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml)
 
-**Cost control for long Claude Code sessions on Windows.**
+**Cost control for long Claude Code sessions on Windows, macOS and Linux.**
 
 Claude Code bills by *context size × number of turns*. This bundle keeps the
 model and effort level you chose, but puts a ceiling on the two things that
 quietly dominate the bill: a context that grows without limit, and turns that
 re-read it for work that did not need it.
 
-Six hooks, a handoff skill, four effort gears, and a measuring tool. No network
-calls, no API keys, no dependencies.
+Six hooks, seven skills, a handoff writer, four effort gears, and a measuring
+tool. No network calls, no API keys, no dependencies.
 
-> **Status:** 0.2.0. Windows PowerShell 5.1 is the supported runtime. Both suites
-> also run under `pwsh` 7 in CI (non-blocking); macOS and Linux are untested —
-> see [docs/troubleshooting.md](docs/troubleshooting.md).
+> **Status:** 0.3.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
+> requirement — the terminal, the VS Code panel and the Desktop app all load the
+> same hooks. Plain claude.ai and Desktop (no hooks) use the portable
+> [`claude-skill`](skills/claude-skill/SKILL.md) instead.
 
 ---
 
@@ -50,6 +52,7 @@ or clear it for you.
 | **Compaction is watched** | Every compaction is logged, and the first manual `/compact` in a session is refused once with a pointer to `/wrap` + `/clear`. Auto-compaction is never blocked. |
 | **Decision log** | One CSV row per decision (not per prompt), so “did the gears ever pay?” is answerable a week later. |
 | **Measurement** | `audit.ps1` reports per-session cache read/write, output, peak context, and cost. `stats.ps1` reports what the tuner decided. |
+| **Portable mode** | No hooks at all: `-NoHooks` installs the rules into `CLAUDE.md` only. The `claude-skill` skill carries the same discipline into Desktop and claude.ai, where hooks do not exist. |
 
 ### Hooks
 
@@ -67,8 +70,12 @@ Hooks fail open: an error exits 0 and Claude Code continues.
 
 ## Install
 
-**Requirements:** Windows 10/11, Claude Code 2.1 or newer, Windows PowerShell 5.1
-(built in). No admin rights, no modules.
+**Requirements:** Claude Code 2.1 or newer. Windows 10/11 needs nothing extra —
+Windows PowerShell 5.1 is built in. macOS and Linux need **PowerShell 7
+(`pwsh`)**, because that is what Claude Code runs the hooks with. No admin
+rights, no modules.
+
+### Windows
 
 ```powershell
 git clone https://github.com/YahyaLendani/opus-tuner.git
@@ -76,13 +83,32 @@ cd opus-tuner
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 ```
 
-The installer:
+### macOS / Linux
 
-- copies the six skills into `~/.claude/skills/` (or `$env:CLAUDE_CONFIG_DIR`);
-- merges six hook events into `~/.claude/settings.json`, **keeping your existing
+```sh
+git clone https://github.com/YahyaLendani/opus-tuner.git
+cd opus-tuner
+./install.sh
+```
+
+`install.sh` is a thin wrapper: it checks for `pwsh`, prints the install command
+for your OS if it is missing, then runs `install.ps1` with every switch passed
+through (`./install.sh -Force`, `./install.sh -NoHooks`, ...).
+
+```sh
+# macOS
+brew install --cask powershell
+# Ubuntu / Debian
+snap install powershell --classic
+```
+
+### The installer does
+
+- copy the seven skills into `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`);
+- merge six hook events into `~/.claude/settings.json`, **keeping your existing
   hooks** and backing the file up first;
-- adds a status line, unless you already have one;
-- appends a marked token-discipline block to `~/.claude/CLAUDE.md`.
+- add a status line, unless you already have one;
+- append a marked token-discipline block to `~/.claude/CLAUDE.md`.
 
 It is idempotent: running it again does not duplicate entries. Use `-Force` to
 replace existing skill folders and an existing status line (both are backed up).
@@ -96,23 +122,49 @@ reads hook config at session start.
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
 ```
 
+### No hooks, or no Claude Code
+
+Hooks only exist in Claude Code. Two fallbacks:
+
+| Situation | Use |
+|---|---|
+| Claude Code, but hooks are blocked by policy | `install.ps1 -NoHooks` (or `./install.sh -NoHooks`): skills and the `CLAUDE.md` block, nothing in `settings.json`. |
+| Desktop app or claude.ai | The [`claude-skill`](skills/claude-skill/SKILL.md) skill: the same discipline as a self-contained, advisory SKILL.md. Upload the folder where your client supports skills, or paste its body into project instructions. |
+
+`-NoHooks` is advisory by design: no ceilings are enforced, no state is written.
+`doctor.ps1` says so if it finds no hooks.
+
 ## Verify
 
 ```powershell
+# Windows
 # 57 assertions: routing, hard wrap, compaction, handoff round trip, audit, timing
 # (56 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
-# 43 assertions: install/upgrade/uninstall against a sandbox config dir
+# 48 assertions: install/upgrade/uninstall, -NoHooks, hook shape, against a sandbox
 powershell -NoProfile -File tests\install-test.ps1
 
 # is the install healthy? hooks registered, scripts present, config valid
 powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1
 ```
 
+```sh
+# macOS / Linux — same scripts, same counts
+pwsh -NoProfile -File skills/opus-tuner/scripts/selftest.ps1
+pwsh -NoProfile -File tests/install-test.ps1
+pwsh -NoProfile -File skills/opus-tuner/scripts/doctor.ps1
+```
+
+`selftest.ps1` picks `pwsh` when it is on `PATH`, otherwise `powershell`. Pass
+`-Interpreter powershell` to force 5.1 on Windows, or `-BudgetMs 3000` on a busy
+CI runner. `doctor.ps1` exits non-zero when something is broken, so it works as
+a post-install gate.
+
 In Claude Code, `/hooks` should list `UserPromptSubmit`, `PostToolUse`,
 `PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact`; `/skills` should list
-`opus-tuner`, `gear-low`, `gear-medium`, `gear-xhigh`, `gear-max`, `wrap`.
+`opus-tuner`, `claude-skill`, `gear-low`, `gear-medium`, `gear-xhigh`, `gear-max`,
+`wrap`. With `-NoHooks`, `/hooks` is empty and that is expected.
 
 ## Configure
 
@@ -140,6 +192,7 @@ Every knob is documented in [docs/configuration.md](docs/configuration.md).
 ## Measure
 
 ```powershell
+# Windows
 # per-session tokens and API-equivalent cost, newest 20 sessions
 powershell -NoProfile -File skills\opus-tuner\scripts\audit.ps1 -Recent 20
 
@@ -148,6 +201,13 @@ powershell -NoProfile -File skills\opus-tuner\scripts\audit.ps1 -Recent 20 -Base
 
 # what the router decided, last 7 days
 powershell -NoProfile -File skills\opus-tuner\scripts\stats.ps1 -Days 7
+```
+
+```sh
+# macOS / Linux
+pwsh -NoProfile -File skills/opus-tuner/scripts/audit.ps1 -Recent 20
+pwsh -NoProfile -File skills/opus-tuner/scripts/audit.ps1 -Recent 20 -Baseline baseline.csv
+pwsh -NoProfile -File skills/opus-tuner/scripts/stats.ps1 -Days 7
 ```
 
 Take a baseline **before** tuning (`audit.ps1 -Csv baseline.csv`), then pass it
@@ -160,12 +220,20 @@ and the traps.
 ## Uninstall
 
 ```powershell
+# Windows, from the clone
 powershell -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1
+```
+
+```sh
+# macOS / Linux, from the clone
+pwsh -NoProfile -File uninstall.ps1
 ```
 
 Removes its hooks, its status line, its `CLAUDE.md` block, and its skill folders.
 Your own hooks and settings stay. `-KeepSkills` keeps the folders; `-Purge` also
-deletes `tuner.config.json` and the session state.
+deletes `tuner.config.json` and the session state. Removing the skills alone is
+not enough if hooks remain: they would fire against missing scripts, so run the
+uninstaller rather than deleting folders by hand.
 
 ## Design constraints
 
@@ -183,12 +251,14 @@ deletes `tuner.config.json` and the session state.
 
 | Document | Contents |
 |---|---|
+| [docs/platforms.md](docs/platforms.md) | Windows, macOS, Linux, terminal vs VS Code vs Desktop, `pwsh` install, `-NoHooks` |
 | [docs/architecture.md](docs/architecture.md) | Hook lifecycle, state schema, concurrency, latency budget |
 | [docs/configuration.md](docs/configuration.md) | Every knob, modes, enforce setup, tuning guidance |
 | [docs/measuring.md](docs/measuring.md) | How `audit.ps1` counts, how to capture a baseline |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | Hooks not firing, VS Code quirks, quota questions |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Hooks not firing, `pwsh` missing, VS Code quirks, quota questions |
 | [docs/decisions.md](docs/decisions.md) | Why the design is shaped this way |
 | [skills/opus-tuner/README.md](skills/opus-tuner/README.md) | Technical reference for the installed skill |
+| [skills/claude-skill/SKILL.md](skills/claude-skill/SKILL.md) | Portable, hook-free version for Desktop and claude.ai |
 
 ## License
 

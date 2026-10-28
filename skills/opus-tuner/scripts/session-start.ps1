@@ -54,7 +54,7 @@ try {
     # resurrect work the session has moved past.
     $body = ''
     if (-not [string]::IsNullOrWhiteSpace($cwd)) {
-        $brief = Join-Path $cwd '.claude\handoff.md'
+        $brief = Join-Path (Join-Path $cwd '.claude') 'handoff.md'
         if (Test-Path -LiteralPath $brief) {
             $inject = $false
             if ($source -eq 'clear') {
@@ -73,7 +73,7 @@ try {
 
                     # Consume it so a later /clear in an unrelated session does
                     # not resurrect it.
-                    try { Move-Item -LiteralPath $brief -Destination (Join-Path $cwd '.claude\handoff.consumed.md') -Force } catch { }
+                    try { Move-Item -LiteralPath $brief -Destination (Join-Path (Join-Path $cwd '.claude') 'handoff.consumed.md') -Force } catch { }
                 }
             }
         }

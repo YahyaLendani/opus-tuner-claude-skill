@@ -4,7 +4,9 @@ Token-budget control for long Claude Code sessions on a fixed model (Opus, high)
 
 Nothing here calls a third-party endpoint, needs an API key, or runs `/clear` for
 you. The repo-level [README](../../README.md) covers installation; this file is the
-reference for what is wired where and why.
+reference for what is wired where and why. The scripts run on Windows PowerShell
+5.1 and on `pwsh` 7 (macOS, Linux, and Windows); see
+[docs/platforms.md](../../docs/platforms.md) for the platform layer.
 
 ## What is wired where
 
@@ -15,6 +17,7 @@ reference for what is wired where and why.
 | Deep tactics | `skills/opus-tuner/references/playbook.md` | 0 until read |
 | Effort gears | `skills/gear-{low,medium,xhigh,max}` | ~100 tok/turn total (descriptions stay visible so a gear can be picked when the router is silent) |
 | Handoff writer | `skills/wrap` + `scripts/brief.ps1` | 0 until invoked |
+| Portable rules | `skills/claude-skill` | 0 until invoked; for clients without hooks |
 | Hooks | `~/.claude/settings.json` | 0 tokens |
 | Status line | `settings.json` → `statusline.ps1` | 0 tokens |
 
@@ -103,7 +106,13 @@ fails the request — worse than the compaction. `PreCompact` also discards
 at 1 MB, keeps one previous file. `stats.ps1` answers "what did it actually do":
 
 ```powershell
+# Windows
 powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\stats.ps1" -Days 7
+```
+
+```sh
+# macOS / Linux
+pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/stats.ps1" -Days 7
 ```
 
 Rows at small context mean a threshold is too low; several `hard-wrap` rows in a
@@ -131,10 +140,11 @@ A gear's `effort:` frontmatter applies to **that turn only**; later turns fall
 back to the resolved session level. `gear-max` uses `effort: max`, which Opus 5.5
 supports even though `max` is not a valid *persisted* `effortLevel` value.
 
-## In VS Code
+## In VS Code, the terminal, and Desktop
 
-The extension ships its own CLI binary
-(`resources/native-binary/claude.exe` in
+All three run the same Claude Code binary and read the same
+`~/.claude/settings.json`, so the hook set is identical. The VS Code extension
+ships its own CLI binary (`resources/native-binary/claude.exe` in
 `%USERPROFILE%\.vscode\extensions\anthropic.claude-code-*`), so the panel does
 **not** use whatever `claude` is on PATH — the two can be different versions.
 `~/.claude/settings.json` is shared by both, so hooks, `skillOverrides` and
@@ -142,10 +152,11 @@ The extension ships its own CLI binary
 
 Two differences that matter:
 
-- **Reload after editing hooks.** The panel reads settings at session start. Use
-  *Developer: Reload Window* (or restart the extension host), then check `/hooks`
-  shows `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `Stop`,
-  `SessionStart`, `PreCompact` and `/skills` lists the six skills.
+- **Reload after editing hooks.** Each client reads settings at session start. The
+  terminal needs a restart, the panel needs *Developer: Reload Window* (or a
+  restart of the extension host), and the Desktop app needs a restart. Then check
+  `/hooks` shows `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `Stop`,
+  `SessionStart`, `PreCompact` and `/skills` lists the seven skills.
 - **New conversations usually start as `startup`, not `clear`.** The panel's
   new-chat button does not always emit the `/clear` source, so
   `session-start.ps1` also re-seeds from `.claude/handoff.md` on `startup` when
@@ -157,9 +168,9 @@ effort; that is what `SessionStart` does, and it is why nothing in this bundle
 switches mid-session.
 
 In the panel, `/clear` is also available as `/reset` and `/new`. The custom
-`statusLine` is a terminal-UI feature and is not drawn by the graphical panel,
-which has its own built-in context indicator; enable `claudeCode.useTerminal` if
-you want the custom bar.
+`statusLine` is a terminal-UI feature and is not drawn by the graphical panel or
+the Desktop app, which have their own built-in context indicator; enable
+`claudeCode.useTerminal` if you want the custom bar.
 
 ## Latency
 
@@ -197,7 +208,7 @@ bottleneck; the first read costs 45 ms at 128 KB and 9 ms at 512 KB once warm),
 and a backwards `LastIndexOf` scan instead of collecting every `"usage"` match
 (2.1 ms vs 6.5 ms on a 137 MB transcript, ~1% of hook time).
 
-### Why not PowerShell 7
+### Why not PowerShell 7 on Windows
 
 PowerShell 7 was installed, measured, and removed on the development machine. It
 was **slower** there, and leaving it installed is actively harmful because Claude
@@ -214,6 +225,10 @@ so pwsh's larger .NET runtime costs ~100 ms that its faster JSON parsing never
 wins back. The MSIX/Store build is slower still. Re-measure before reinstalling
 on different hardware; do not assume the usual "pwsh is faster" advice applies.
 
+This is a Windows measurement and says nothing about macOS or Linux, where `pwsh`
+is the only option and the same ~150 ms startup floor applies. See
+[docs/platforms.md](../../docs/platforms.md).
+
 ## Enforce mode
 
 `mode: "enforce"` only takes effect once the `PreToolUse` hook is registered,
@@ -221,7 +236,13 @@ which is disabled by default because it costs another blocking invocation on
 every `Read`. Register it with:
 
 ```powershell
+# Windows
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
+```
+
+```sh
+# macOS / Linux
+./install.sh -Force -Enforce
 ```
 
 Then set `"mode": "enforce"` in `tuner.config.json`.
@@ -229,7 +250,13 @@ Then set `"mode": "enforce"` in `tuner.config.json`.
 ## Removing it
 
 ```powershell
+# Windows
 powershell -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1
+```
+
+```sh
+# macOS / Linux
+pwsh -NoProfile -File uninstall.ps1
 ```
 
 That removes only this bundle's hooks, status line, `CLAUDE.md` block, and skill

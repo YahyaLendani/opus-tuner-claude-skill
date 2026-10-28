@@ -22,13 +22,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$claudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
+$OnWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+$HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE }
+           elseif ($env:HOME) { $env:HOME }
+           else { [System.Environment]::GetFolderPath('UserProfile') }
+$nl = if ($OnWindows) { "`r`n" } else { "`n" }
+
+$claudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HomeDir '.claude' }
 $skillsDir = Join-Path $claudeDir 'skills'
 $settingsPath = Join-Path $claudeDir 'settings.json'
 $claudeMdPath = Join-Path $claudeDir 'CLAUDE.md'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $ours = 'opus-tuner[/\\]scripts[/\\]'
-$skills = @('opus-tuner', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')
+$skills = @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')
 
 function ConvertTo-Hashtable {
     param($InputObject)
@@ -107,7 +113,7 @@ if (Test-Path -LiteralPath $claudeMdPath) {
             Remove-Item -LiteralPath $claudeMdPath -Force
             Write-Host '  ok     CLAUDE.md removed (it contained only the block)'
         } else {
-            [System.IO.File]::WriteAllText($claudeMdPath, $clean + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+            [System.IO.File]::WriteAllText($claudeMdPath, $clean + $nl, (New-Object System.Text.UTF8Encoding($false)))
             Write-Host '  ok     token-discipline block removed from CLAUDE.md'
         }
     }
@@ -132,7 +138,7 @@ if ($KeepSkills) {
 
 # ---------- optional data ----------
 if ($Purge) {
-    foreach ($p in @((Join-Path $claudeDir 'tuner.config.json'), (Join-Path $claudeDir 'state\tuner'))) {
+    foreach ($p in @((Join-Path $claudeDir 'tuner.config.json'), (Join-Path (Join-Path $claudeDir 'state') 'tuner'))) {
         if (Test-Path -LiteralPath $p) {
             if ($DryRun) {
                 Write-Host "  would  remove $p"

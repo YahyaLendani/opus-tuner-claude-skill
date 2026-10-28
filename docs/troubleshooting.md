@@ -5,12 +5,18 @@
 0. **Run the doctor.** It checks the whole wiring in one command:
 
    ```powershell
+   # Windows
    powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\doctor.ps1"
+   ```
+
+   ```sh
+   # macOS / Linux
+   pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/doctor.ps1"
    ```
 
    Exit code 0 means healthy. It names the specific break: a hook pointing at a
    missing script, a config that does not parse, a skill folder without a matching
-   `name:`, or an unwritable state directory.
+   `name:`, an unwritable state directory, or — on POSIX — a missing `pwsh`.
 
 1. **Reload.** Claude Code reads hook configuration at session start. Restart it,
    or use *Developer: Reload Window* in VS Code.
@@ -31,13 +37,32 @@ If the file does not exist, `SessionStart` did not run.
 
 Expect ~450 ms per blocking hook. If it is much slower:
 
-- Check whether `pwsh.exe` is on PATH. Claude Code prefers it for
+- **Windows:** check whether `pwsh.exe` is on PATH. Claude Code prefers it for
   `shell: "powershell"` hooks, and on some machines it starts ~100 ms slower than
   Windows PowerShell 5.1. See the latency section of the
   [technical reference](../skills/opus-tuner/README.md#latency).
+- **macOS / Linux:** `pwsh` startup is the floor, and there is no 5.1 to fall
+  back to. If hooks take seconds, check whether `pwsh` is being started through a
+  wrapper (`snap` and some `brew` installs add one) and measure
+  `pwsh -NoProfile -Command 1` directly.
 - Antivirus real-time scanning of `powershell.exe` adds a fixed cost per
   invocation. Excluding the script directory is usually enough.
 - Run `selftest.ps1`; it prints per-hook timings and fails above the budget.
+
+## `pwsh` is not found (macOS / Linux)
+
+This is the most common POSIX failure. Hooks are written as
+`pwsh -NoProfile -File "<path>"`; if `pwsh` is not on `PATH`, Claude Code cannot
+start them and nothing fires — no error in the transcript.
+
+```sh
+command -v pwsh                     # empty means missing
+brew install --cask powershell      # macOS
+snap install powershell --classic   # Ubuntu / Debian
+```
+
+Then re-run `install.sh`. `doctor.ps1` checks for `pwsh` explicitly on POSIX and
+fails the check rather than reporting a healthy install.
 
 ## The status line is missing in VS Code
 
@@ -108,8 +133,22 @@ next to the skill.
 
 ## macOS and Linux
 
-Untested. The scripts are PowerShell and pass both suites under `pwsh` 7 on
-Windows in CI, but the hook entries use `shell: "powershell"` and the installer
-writes Windows paths. If you want to try, install `pwsh`, change the hook shell
-to `pwsh`, and expect path and encoding fixes. PRs are welcome, but the supported
-runtime is Windows PowerShell 5.1.
+Supported as of 0.3.0, with one prerequisite: **PowerShell 7 (`pwsh`)**. Claude
+Code starts command hooks with `sh` there, so the installer writes
+`pwsh -NoProfile -File "<path>"` instead of `& "<path>"`.
+
+If hooks do not fire on macOS or Linux, check in this order:
+
+1. `command -v pwsh` — empty means install it (see above).
+2. `/hooks` — the entries should say `shell: bash` and start with `pwsh`.
+3. `doctor.ps1` — it checks the interpreter, the paths and the state directory.
+4. `install.sh` — re-run it; it refuses to install without `pwsh` rather than
+   writing hooks that cannot start.
+
+Two differences from Windows are expected, not bugs:
+
+- `-ExecutionPolicy` is never used, because `pwsh` does not accept it.
+- `CLAUDE.md` and `settings.json` are written with LF line endings.
+
+The POSIX path is exercised by the Ubuntu and macOS CI jobs, including
+`install.sh` under `bash`. See [platforms.md](platforms.md).

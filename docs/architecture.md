@@ -134,6 +134,33 @@ Every hook body is wrapped in `try { } catch { }` and ends with `exit 0`. A hook
 that throws must never strand a session. The cost is that a bug can be silent,
 which is why the self-test asserts outputs rather than exit codes alone.
 
+## Platform layer
+
+Every script dot-sources `_common.ps1`, which resolves the three platform
+differences once:
+
+```powershell
+$script:OnWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+$script:HomeDir   = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { ... }
+$script:TunerRoot = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $script:HomeDir '.claude' }
+```
+
+No hook contains a backslash path literal. `Join-Path` is always nested —
+`Join-Path (Join-Path $root 'state') 'tuner'` — because a single literal
+`'state\tuner'` is one filename on POSIX, not two directories.
+
+The installer is the only place that knows which interpreter runs a hook. On
+Windows it writes `& "<path>"` with `"shell": "powershell"`; on POSIX it writes
+`pwsh -NoProfile -File "<path>"` with `"shell": "bash"`. `-ExecutionPolicy` is
+emitted only on Windows, because `pwsh` rejects it elsewhere. The installer also
+normalises line endings: CRLF on Windows, LF on POSIX, for `CLAUDE.md` and the
+hook JSON.
+
+The self-test follows the same rule. It builds an `$ExePrefix` (`-NoProfile` plus
+`-ExecutionPolicy Bypass` on Windows only) and uses
+`[System.IO.Path]::GetTempPath()` rather than `$env:TEMP`, so the same assertions
+run on all three platforms.
+
 ## Why PowerShell
 
 The target is Windows, where Windows PowerShell 5.1 is already installed. A hook
@@ -142,6 +169,11 @@ runs in a fresh process on every prompt and every tool call, so startup dominate
 dependency would make installation worse. See the latency section of
 [the technical reference](../skills/opus-tuner/README.md#latency) for the
 measurements.
+
+macOS and Linux require `pwsh` 7 instead, because there is no built-in PowerShell
+there. That is a deliberate trade: one implementation with a runtime dependency
+beats two implementations that drift. A bash rewrite was considered and rejected;
+see [decisions.md](decisions.md#13-pwsh-7-on-macos-and-linux).
 
 The trade-off is that each hook pays ~150 ms of process startup. That is the
 price of not requiring a long-lived process, which Claude Code does not offer for

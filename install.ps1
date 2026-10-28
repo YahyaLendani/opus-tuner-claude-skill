@@ -4,10 +4,18 @@
 # touching hooks you already have. Idempotent: running it twice does not
 # duplicate entries. Every settings write is preceded by a timestamped backup.
 #
+# Windows (built in):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Enforce
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -DryRun
+#
+# macOS / Linux (needs pwsh 7: brew install --cask powershell, apt, or snap):
+#   ./install.sh                 # wrapper that checks for pwsh
+#   pwsh -NoProfile -File install.ps1 -Force
+#
+# -NoHooks installs the skills and the CLAUDE.md block only, for machines where
+# hooks cannot run. See docs/platforms.md.
 #
 # Target: $env:CLAUDE_CONFIG_DIR if set, otherwise ~/.claude.
 
@@ -21,20 +29,34 @@ param(
     [switch]$SkipClaudeMd,
     # Do not install the status line.
     [switch]$NoStatusLine,
+    # Do not touch settings.json at all: skills + CLAUDE.md only.
+    [switch]$NoHooks,
     # Print the merged settings instead of writing anything.
     [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
 
-$claudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
+# Same platform layer as _common.ps1. The installer stays standalone on purpose:
+# it must work even when the scripts it is about to copy are half-present.
+$OnWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+$HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE }
+           elseif ($env:HOME) { $env:HOME }
+           else { [System.Environment]::GetFolderPath('UserProfile') }
+
+if (-not $OnWindows -and -not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+    throw "pwsh 7 is required on macOS/Linux because Claude Code runs the hooks with it. Install it first: macOS 'brew install --cask powershell', Ubuntu 'snap install powershell --classic', or https://aka.ms/powershell"
+}
+
+$claudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HomeDir '.claude' }
 $skillsDir = Join-Path $claudeDir 'skills'
 $settingsPath = Join-Path $claudeDir 'settings.json'
 $claudeMdPath = Join-Path $claudeDir 'CLAUDE.md'
-$backupDir = Join-Path $claudeDir 'state\opus-tuner-backups'
+$backupDir = Join-Path (Join-Path $claudeDir 'state') 'opus-tuner-backups'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$nl = if ($OnWindows) { "`r`n" } else { "`n" }
 
-$skills = @('opus-tuner', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')
+$skills = @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')
 
 function ConvertTo-Hashtable {
     param($InputObject)
@@ -57,15 +79,29 @@ function ConvertTo-Hashtable {
 
 function Get-ScriptCommand {
     param([string]$Name)
-    $p = (Join-Path $skillsDir "opus-tuner\scripts\$Name") -replace '\\', '/'
-    return "& `"$p`""
+    $p = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') $Name
+    if ($OnWindows) {
+        # Claude Code runs this through PowerShell; the & call operator is the
+        # portable way to run a quoted script path.
+        return "& `"$($p -replace '\\', '/')`""
+    }
+    # POSIX hooks are spawned by sh, so name the interpreter explicitly.
+    return "pwsh -NoProfile -File `"$p`""
+}
+
+function Get-StatusLineCommand {
+    $p = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'statusline.ps1'
+    if ($OnWindows) {
+        return "powershell -NoProfile -ExecutionPolicy Bypass -File `"$($p -replace '\\', '/')`""
+    }
+    return "pwsh -NoProfile -File `"$p`""
 }
 
 function New-HookGroup {
     param([string]$Script, [string]$Matcher = '', [int]$Timeout = 10, [switch]$Async)
     $hook = @{
         type    = 'command'
-        shell   = 'powershell'
+        shell   = $(if ($OnWindows) { 'powershell' } else { 'bash' })
         command = (Get-ScriptCommand $Script)
         timeout = $Timeout
     }
@@ -106,7 +142,7 @@ elseif (-not (Test-Path -LiteralPath $claudeDir)) { New-Item -ItemType Directory
 Write-Host ''
 Write-Host 'skills' -ForegroundColor Yellow
 foreach ($s in $skills) {
-    $src = Join-Path $PSScriptRoot "skills\$s"
+    $src = Join-Path (Join-Path $PSScriptRoot 'skills') $s
     $dst = Join-Path $skillsDir $s
     if (-not (Test-Path -LiteralPath $src)) { throw "missing source folder: $src" }
 
@@ -133,70 +169,83 @@ foreach ($s in $skills) {
 Write-Host ''
 Write-Host 'hooks and status line' -ForegroundColor Yellow
 
-$settings = @{}
-if (Test-Path -LiteralPath $settingsPath) {
-    try {
-        $settings = ConvertTo-Hashtable (Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json)
-    } catch {
-        throw "settings.json is not valid JSON; fix it before installing: $settingsPath"
-    }
-    if (-not ($settings -is [System.Collections.IDictionary])) { $settings = @{} }
-}
-if (-not $settings.Contains('hooks')) { $settings['hooks'] = @{} }
-$hooks = $settings['hooks']
-
-Set-OurHook $hooks 'UserPromptSubmit' (New-HookGroup 'route.ps1')
-Set-OurHook $hooks 'PostToolUse' (New-HookGroup 'post-tool.ps1' 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell' 10 -Async)
-Set-OurHook $hooks 'PostToolUseFailure' (New-HookGroup 'post-tool.ps1' '' 10 -Async)
-Set-OurHook $hooks 'Stop' (New-HookGroup 'stop.ps1')
-Set-OurHook $hooks 'SessionStart' (New-HookGroup 'session-start.ps1' 'startup|resume|clear|compact|fork' 15)
-Set-OurHook $hooks 'PreCompact' (New-HookGroup 'pre-compact.ps1' 'manual|auto')
-if ($Enforce) {
-    Set-OurHook $hooks 'PreToolUse' (New-HookGroup 'pre-tool.ps1' 'Read')
-} else {
-    Set-OurHook $hooks 'PreToolUse' $null
-}
-Write-Host '  ok     six hook events (PreToolUse only with -Enforce)'
-
-$statusLineOurs = $false
-if ($settings.Contains('statusLine') -and $settings['statusLine']) {
-    $slCmd = [string]$settings['statusLine']['command']
-    $statusLineOurs = $slCmd -match 'opus-tuner[/\\]scripts[/\\]statusline\.ps1'
-}
-if ($NoStatusLine) {
-    if ($statusLineOurs) { $settings.Remove('statusLine') }
-    Write-Host '  skip   status line (-NoStatusLine)'
-} elseif ($statusLineOurs -or -not $settings.Contains('statusLine') -or -not $settings['statusLine']) {
-    $p = (Join-Path $skillsDir 'opus-tuner\scripts\statusline.ps1') -replace '\\', '/'
-    $settings['statusLine'] = @{
-        type    = 'command'
-        command = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$p`""
-        padding = 0
-    }
-    Write-Host '  ok     status line'
-} elseif ($Force) {
-    $p = (Join-Path $skillsDir 'opus-tuner\scripts\statusline.ps1') -replace '\\', '/'
-    $settings['statusLine'] = @{
-        type    = 'command'
-        command = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$p`""
-        padding = 0
-    }
-    Write-Host '  ok     status line replaced (-Force; old value is in the backup)'
-} else {
-    Write-Host '  keep   your existing status line (pass -Force to replace it)'
-}
-
-if ($DryRun) {
-    Write-Host ''
-    Write-Host 'merged settings.json:' -ForegroundColor Yellow
-    $settings | ConvertTo-Json -Depth 20
-} else {
+if ($NoHooks) {
+    # Advisory mode: skills and CLAUDE.md only. settings.json is not read, so a
+    # machine with a locked-down or absent config is never touched.
+    Write-Host '  skip   settings.json (-NoHooks: advisory mode, no automation)'
     if (Test-Path -LiteralPath $settingsPath) {
-        Copy-Item -LiteralPath $settingsPath -Destination "$settingsPath.bak-$stamp" -Force
-        Write-Host "  ok     backup $settingsPath.bak-$stamp"
+        $existing = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8
+        if ($existing -match 'opus-tuner[/\\]scripts[/\\]') {
+            Write-Host '  note   settings.json still has opus-tuner hooks from an earlier install;' -ForegroundColor Yellow
+            Write-Host '         run uninstall.ps1 -KeepSkills first if you want them gone.' -ForegroundColor Yellow
+        }
     }
-    Write-JsonFile $settingsPath $settings
-    Write-Host '  ok     settings.json written'
+}
+
+$settings = @{}
+if (-not $NoHooks) {
+    if (Test-Path -LiteralPath $settingsPath) {
+        try {
+            $settings = ConvertTo-Hashtable (Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+        } catch {
+            throw "settings.json is not valid JSON; fix it before installing: $settingsPath"
+        }
+        if (-not ($settings -is [System.Collections.IDictionary])) { $settings = @{} }
+    }
+    if (-not $settings.Contains('hooks')) { $settings['hooks'] = @{} }
+    $hooks = $settings['hooks']
+
+    Set-OurHook $hooks 'UserPromptSubmit' (New-HookGroup 'route.ps1')
+    Set-OurHook $hooks 'PostToolUse' (New-HookGroup 'post-tool.ps1' 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell' 10 -Async)
+    Set-OurHook $hooks 'PostToolUseFailure' (New-HookGroup 'post-tool.ps1' '' 10 -Async)
+    Set-OurHook $hooks 'Stop' (New-HookGroup 'stop.ps1')
+    Set-OurHook $hooks 'SessionStart' (New-HookGroup 'session-start.ps1' 'startup|resume|clear|compact|fork' 15)
+    Set-OurHook $hooks 'PreCompact' (New-HookGroup 'pre-compact.ps1' 'manual|auto')
+    if ($Enforce) {
+        Set-OurHook $hooks 'PreToolUse' (New-HookGroup 'pre-tool.ps1' 'Read')
+    } else {
+        Set-OurHook $hooks 'PreToolUse' $null
+    }
+    Write-Host '  ok     six hook events (PreToolUse only with -Enforce)'
+
+    $statusLineOurs = $false
+    if ($settings.Contains('statusLine') -and $settings['statusLine']) {
+        $slCmd = [string]$settings['statusLine']['command']
+        $statusLineOurs = $slCmd -match 'opus-tuner[/\\]scripts[/\\]statusline\.ps1'
+    }
+    if ($NoStatusLine) {
+        if ($statusLineOurs) { $settings.Remove('statusLine') }
+        Write-Host '  skip   status line (-NoStatusLine)'
+    } elseif ($statusLineOurs -or -not $settings.Contains('statusLine') -or -not $settings['statusLine']) {
+        $settings['statusLine'] = @{
+            type    = 'command'
+            command = (Get-StatusLineCommand)
+            padding = 0
+        }
+        Write-Host '  ok     status line'
+    } elseif ($Force) {
+        $settings['statusLine'] = @{
+            type    = 'command'
+            command = (Get-StatusLineCommand)
+            padding = 0
+        }
+        Write-Host '  ok     status line replaced (-Force; old value is in the backup)'
+    } else {
+        Write-Host '  keep   your existing status line (pass -Force to replace it)'
+    }
+
+    if ($DryRun) {
+        Write-Host ''
+        Write-Host 'merged settings.json:' -ForegroundColor Yellow
+        $settings | ConvertTo-Json -Depth 20
+    } else {
+        if (Test-Path -LiteralPath $settingsPath) {
+            Copy-Item -LiteralPath $settingsPath -Destination "$settingsPath.bak-$stamp" -Force
+            Write-Host "  ok     backup $settingsPath.bak-$stamp"
+        }
+        Write-JsonFile $settingsPath $settings
+        Write-Host '  ok     settings.json written'
+    }
 }
 
 # ---------- 3. CLAUDE.md ----------
@@ -215,6 +264,9 @@ $begin
 - Never trade verification for tokens.
 $end
 "@
+# The here-string carries the checkout's line endings; normalise so a Linux
+# install does not write CRLF into CLAUDE.md.
+$block = $block -replace "`r`n", "`n"
 
 if ($SkipClaudeMd) {
     Write-Host '  skip   (-SkipClaudeMd)'
@@ -226,8 +278,8 @@ if ($SkipClaudeMd) {
         Write-Host '  would  append the token-discipline block'
     } else {
         if (-not (Test-Path -LiteralPath $claudeDir)) { New-Item -ItemType Directory -Force -Path $claudeDir | Out-Null }
-        $prefix = if ([string]::IsNullOrWhiteSpace($existing)) { '' } else { $existing.TrimEnd() + "`r`n`r`n" }
-        [System.IO.File]::WriteAllText($claudeMdPath, $prefix + $block + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+        $prefix = if ([string]::IsNullOrWhiteSpace($existing)) { '' } else { $existing.TrimEnd() + $nl + $nl }
+        [System.IO.File]::WriteAllText($claudeMdPath, $prefix + ($block -replace "`n", $nl) + $nl, (New-Object System.Text.UTF8Encoding($false)))
         Write-Host '  ok     token-discipline block appended'
     }
 }
@@ -241,11 +293,16 @@ Write-Host 'done.' -ForegroundColor Green
 Write-Host ''
 Write-Host 'next:'
 Write-Host '  1. restart Claude Code (or Developer: Reload Window in VS Code)'
-Write-Host '  2. run /hooks  -> expect UserPromptSubmit, PostToolUse, PostToolUseFailure, Stop, SessionStart, PreCompact'
-Write-Host '  3. run /skills -> expect opus-tuner, gear-low, gear-medium, gear-xhigh, gear-max, wrap'
-$verify = Join-Path $skillsDir 'opus-tuner\scripts\selftest.ps1'
-Write-Host "  4. verify:    powershell -NoProfile -File `"$verify`""
-$doctor = Join-Path $skillsDir 'opus-tuner\scripts\doctor.ps1'
-Write-Host "     diagnose:  powershell -NoProfile -File `"$doctor`""
+if ($NoHooks) {
+    Write-Host '     advisory mode: no hooks were registered, so there is nothing to reload'
+} else {
+    Write-Host '  2. run /hooks  -> expect UserPromptSubmit, PostToolUse, PostToolUseFailure, Stop, SessionStart, PreCompact'
+}
+Write-Host '  3. run /skills -> expect opus-tuner, claude-skill, gear-low, gear-medium, gear-xhigh, gear-max, wrap'
+$verify = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'selftest.ps1'
+$doctor = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'doctor.ps1'
+$exe = if ($OnWindows) { 'powershell -NoProfile' } else { 'pwsh -NoProfile' }
+Write-Host "  4. verify:    $exe -File `"$verify`""
+Write-Host "     diagnose:  $exe -File `"$doctor`""
 Write-Host ''
 exit 0

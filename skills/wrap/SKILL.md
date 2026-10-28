@@ -10,7 +10,11 @@ Use at a task boundary, or when context is near its ceiling.
 1. Run the brief writer — it derives the facts from the transcript, not from memory:
 
    ```
+   # Windows
    powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\brief.ps1"
+
+   # macOS / Linux
+   pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/brief.ps1"
    ```
 
    If `CLAUDE_CONFIG_DIR` is set, substitute it for `~/.claude` in that path.

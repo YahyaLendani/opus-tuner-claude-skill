@@ -20,7 +20,7 @@ $ErrorActionPreference = 'Stop'
 
 if ($Root) {
     $script:TunerRoot = $Root
-    $script:TunerState = Join-Path $Root 'state\tuner'
+    $script:TunerState = Join-Path (Join-Path $Root 'state') 'tuner'
     $script:TunerConfig = Join-Path $Root 'tuner.config.json'
 }
 
@@ -119,8 +119,14 @@ if ($settings -and $settings.autoCompactWindow) {
 
 Add-Check 'mode is a known value' (@('advise', 'enforce', 'off') -contains [string]$cfg['mode']) ([string]$cfg['mode'])
 
+# POSIX hooks name pwsh explicitly, so a missing pwsh is the most likely reason
+# nothing fires on macOS or Linux.
+if (-not $script:OnWindows) {
+    Add-Check 'pwsh on PATH' ([bool](Get-Command pwsh -ErrorAction SilentlyContinue)) 'hooks run with pwsh'
+}
+
 # ---------- skills ----------
-foreach ($s in @('opus-tuner', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')) {
+foreach ($s in @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')) {
     $md = Join-Path (Join-Path $skillsDir $s) 'SKILL.md'
     $ok = Test-Path -LiteralPath $md
     $detail = if ($ok) { '' } else { "missing $md" }
@@ -134,7 +140,7 @@ foreach ($s in @('opus-tuner', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-ma
 }
 
 # ---------- scripts parse ----------
-$scripts = @(Get-ChildItem -LiteralPath (Join-Path $skillsDir 'opus-tuner\scripts') -Filter '*.ps1' -ErrorAction SilentlyContinue)
+$scripts = @(Get-ChildItem -LiteralPath (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') -Filter '*.ps1' -ErrorAction SilentlyContinue)
 if ($scripts.Count -eq 0) {
     Add-Check 'scripts present' $false 'no .ps1 files found'
 } else {
