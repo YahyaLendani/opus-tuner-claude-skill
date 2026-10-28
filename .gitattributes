@@ -1,0 +1,6 @@
+# Normalise line endings so a Windows clone and a Linux CI runner agree.
+# PowerShell scripts keep CRLF (native, and safest for here-strings).
+* text=auto
+*.ps1 text eol=crlf
+*.yml text eol=lf
+*.md  text eol=lf

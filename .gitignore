@@ -1,0 +1,13 @@
+# Per-machine and per-run artifacts
+state/
+*.bak-*
+*.tmp
+*.log
+settings.json
+tuner.config.json
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

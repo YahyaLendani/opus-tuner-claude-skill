@@ -1,0 +1,408 @@
+# Self-test for opus-tuner. Exercises every hook and skill script end to end
+# against a synthetic transcript, so nothing writes into a real project.
+#
+#   powershell -NoProfile -File selftest.ps1
+#   powershell -NoProfile -File selftest.ps1 -Interpreter powershell.exe
+#
+# Exits 0 when everything passes, 1 when anything fails.
+
+param(
+    [string]$Interpreter = '',
+    # Generous on purpose. A hook costs ~440-490 ms on an idle machine, and the
+    # spread between runs is tens of ms, so a 500 ms gate fails on a busy laptop
+    # without indicating a regression. This gate is for "someone made the hook
+    # 2x slower", not for noise. Pass a tighter value when measuring on purpose.
+    [int]$BudgetMs = 750
+)
+
+$ErrorActionPreference = 'Stop'
+$here = $PSScriptRoot
+
+$sandbox = Join-Path $env:TEMP ('opus-tuner-selftest-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Force -Path $sandbox | Out-Null
+# Keep every state file and decision row out of the live directories. This has to
+# be set before _common.ps1 is loaded, because it captures the path at dot-source.
+$env:OPUS_TUNER_STATE = Join-Path $sandbox 'state'
+New-Item -ItemType Directory -Force -Path $env:OPUS_TUNER_STATE | Out-Null
+
+. (Join-Path $here '_common.ps1')
+
+# Guard: if the isolation override did not take effect, every hook below would
+# write fake sessions into the live state directory. Refuse rather than litter.
+$liveState = Join-Path $script:TunerRoot 'state\tuner'
+if ($script:TunerState -eq $liveState) {
+    Write-Host 'refusing to run: OPUS_TUNER_STATE was not set before _common.ps1 was loaded' -ForegroundColor Red
+    exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($Interpreter)) {
+    $Interpreter = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
+}
+
+$startedAt = (Get-Date).AddSeconds(-1)
+
+$pass = 0
+$fail = 0
+$timings = New-Object System.Collections.ArrayList
+$createdStates = New-Object System.Collections.ArrayList
+
+function Check {
+    param([string]$Name, [bool]$Ok, [string]$Detail = '')
+    if ($Ok) {
+        $script:pass++
+        Write-Host "  PASS  $Name" -ForegroundColor Green
+    } else {
+        $script:fail++
+        Write-Host "  FAIL  $Name  $Detail" -ForegroundColor Red
+    }
+}
+
+function Invoke-Hook {
+    param([string]$Script, [string]$Payload)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $out = $Payload | & $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here $Script) 2>&1
+    $sw.Stop()
+    $text = ($out | Where-Object { $_ -is [string] }) -join "`n"
+    return @{ text = $text.Trim(); ms = $sw.ElapsedMilliseconds }
+}
+
+function New-Payload {
+    param([string]$Sid, [string]$Transcript, [string]$Prompt = '', [string]$Mode = 'default', [string]$Event = 'UserPromptSubmit', [bool]$StopActive = $false)
+    return (@{
+        session_id      = $Sid
+        cwd             = $sandbox
+        transcript_path = $Transcript
+        permission_mode = $Mode
+        hook_event_name = $Event
+        prompt          = $Prompt
+        stop_hook_active = $StopActive
+    } | ConvertTo-Json -Compress)
+}
+
+function Write-FakeTranscript {
+    param([string]$Name, [int]$CtxTokens)
+    $p = Join-Path $sandbox $Name
+    $line = '{"type":"assistant","message":{"model":"claude-opus-5-5","role":"assistant","usage":{"input_tokens":2,"cache_read_input_tokens":' + $CtxTokens + ',"cache_creation_input_tokens":0,"output_tokens":300}}}'
+    [System.IO.File]::WriteAllText($p, $line, (New-Object System.Text.UTF8Encoding($false)))
+    return $p
+}
+
+function New-Sid {
+    $sid = 'st-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+    [void]$script:createdStates.Add($sid)
+    return $sid
+}
+
+$small = Write-FakeTranscript 'ctx-80k.jsonl' 80000
+$mid = Write-FakeTranscript 'ctx-120k.jsonl' 120000
+$large = Write-FakeTranscript 'ctx-160k.jsonl' 160000
+$over = Write-FakeTranscript 'ctx-260k.jsonl' 260000
+
+Write-Host ''
+Write-Host "opus-tuner self-test  (interpreter: $Interpreter)" -ForegroundColor Cyan
+Write-Host "sandbox: $sandbox"
+Write-Host ''
+
+# ---------- 1. routing ----------
+Write-Host 'routing' -ForegroundColor Yellow
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename all the variables in the codebase')
+[void]$timings.Add([pscustomobject]@{ name = 'route'; ms = $r.ms })
+$ok = $r.text.StartsWith('{')
+Check 'mechanical+bulk emits valid JSON' $ok $r.text
+Check 'mechanical+bulk routes to gear-low' ($r.text -match 'gear=low') $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename this function')
+Check 'mechanical without bulk stays silent at 120k' ($r.text.Length -eq 0) $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $small 'why does the auth race condition happen only under load, find the root cause')
+Check 'hard prompt escalates tier to deep' ($r.text -match 'tier=deep') $r.text
+Check 'hard prompt routes to gear-xhigh' ($r.text -match 'gear=xhigh') $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $small 'what does this function do')
+Check 'trivial prompt stays silent' ($r.text.Length -eq 0) $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $large 'carry on')
+Check 'grace escalates instead of wrapping' ($r.text -match 'tier=deep \(grace\)' -and $r.text -notmatch '/clear') $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $over 'carry on')
+Check 'prompt at the ceiling demands a wrap' ($r.text -match 'ceiling' -and $r.text -match '/clear') $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $small 'help me plan the migration' 'plan')
+Check 'plan mode escalates to deep' ($r.text -match 'tier=deep') $r.text
+
+# ---------- 2. usage parsing ----------
+Write-Host ''
+Write-Host 'usage parsing (regression: nested and duplicated usage objects)' -ForegroundColor Yellow
+
+$nested = Join-Path $sandbox 'ctx-nested.jsonl'
+$nestedLine = '{"type":"assistant","message":{"model":"claude-opus-5-5","role":"assistant","usage":{"input_tokens":2,"cache_creation_input_tokens":781,"cache_read_input_tokens":700000,"output_tokens":461,"output_tokens_details":{"thinking_tokens":156},"server_tool_use":{"web_search_requests":0,"fetch_requests":0},"cache_creation":{"ephemeral_1h_input_tokens":781,"ephemeral_5m_input_tokens":0},"iterations":[{"input_tokens":2,"output_tokens":461,"cache_read_input_tokens":700000,"cache_creation_input_tokens":781}]}}}'
+[System.IO.File]::WriteAllText($nested, $nestedLine, (New-Object System.Text.UTF8Encoding($false)))
+$info = Get-ContextInfo -TranscriptPath $nested
+Check 'nested iterations counted once' ([int64]$info.ctx -eq 700783) "ctx=$($info.ctx)"
+
+# A quota-error message ends a real transcript with an all-zero usage block.
+$zeroLine = '{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"server_tool_use":{"web_search_requests":0},"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0}}}}'
+[System.IO.File]::AppendAllText($nested, "`n" + $zeroLine, (New-Object System.Text.UTF8Encoding($false)))
+$info = Get-ContextInfo -TranscriptPath $nested
+Check 'zero-usage tail falls back to last real message' ([int64]$info.ctx -eq 700783) "ctx=$($info.ctx)"
+
+# Bookkeeping lines at the end must not hide the last usage block.
+$pad = ('{"type":"cost-state","sessionId":"x","totalCostUSD":1.0}' + "`n") * 4000
+[System.IO.File]::AppendAllText($nested, $pad, (New-Object System.Text.UTF8Encoding($false)))
+$info = Get-ContextInfo -TranscriptPath $nested
+Check 'bookkeeping tail still finds the usage block' ([int64]$info.ctx -eq 700783) "ctx=$($info.ctx)"
+
+# ---------- 3. signals ----------
+Write-Host ''
+Write-Host 'tool signals' -ForegroundColor Yellow
+
+$sid = New-Sid
+$f = (@{ session_id = $sid; cwd = $sandbox; hook_event_name = 'PostToolUseFailure'; tool_name = 'Bash'; tool_input = @{ command = 'npm test' }; error = 'Exit code 1' } | ConvertTo-Json -Compress)
+Invoke-Hook 'post-tool.ps1' $f | Out-Null
+$r = Invoke-Hook 'post-tool.ps1' $f
+[void]$timings.Add([pscustomobject]@{ name = 'post-tool'; ms = $r.ms })
+$st = Read-State $sid
+Check 'two failures counted' ([int]$st['fails'] -eq 2) "fails=$($st['fails'])"
+
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $small 'the race condition is still failing, fix it')
+Check 'repair loop routes to gear-max' ($r.text -match 'gear=max') $r.text
+
+$sid2 = New-Sid
+$e = (@{ session_id = $sid2; cwd = $sandbox; hook_event_name = 'PostToolUse'; tool_name = 'Edit'; tool_input = @{ file_path = 'C:\x\a.ts' } } | ConvertTo-Json -Compress)
+Invoke-Hook 'post-tool.ps1' $e | Out-Null
+$st = Read-State $sid2
+Check 'edited file recorded' (@($st['files']).Count -eq 1) "files=$(@($st['files']) -join ',')"
+
+$ok = (@{ session_id = $sid2; cwd = $sandbox; hook_event_name = 'PostToolUse'; tool_name = 'Bash'; tool_input = @{ command = 'ls' } } | ConvertTo-Json -Compress)
+Invoke-Hook 'post-tool.ps1' $ok | Out-Null
+$st = Read-State $sid2
+Check 'successful command clears the failure counter' ([int]$st['fails'] -eq 0) "fails=$($st['fails'])"
+
+# On Windows the shell tool is 'PowerShell', not 'Bash'. If a successful call
+# with that name doesn't clear the counter, the repair-loop signal latches on
+# and every later turn gets told to spend gear-max.
+$sid3 = New-Sid
+$psFail = (@{ session_id = $sid3; cwd = $sandbox; hook_event_name = 'PostToolUseFailure'; tool_name = 'PowerShell'; tool_input = @{ command = 'npm test' }; error = 'Exit code 1' } | ConvertTo-Json -Compress)
+Invoke-Hook 'post-tool.ps1' $psFail | Out-Null
+$st = Read-State $sid3
+$before = [int]$st['fails']
+$psOk = (@{ session_id = $sid3; cwd = $sandbox; hook_event_name = 'PostToolUse'; tool_name = 'PowerShell'; tool_input = @{ command = 'git status' } } | ConvertTo-Json -Compress)
+Invoke-Hook 'post-tool.ps1' $psOk | Out-Null
+$st = Read-State $sid3
+Check 'PowerShell tool failure counted' ($before -eq 1) "fails=$before"
+Check 'successful PowerShell call clears the counter' ([int]$st['fails'] -eq 0) "fails=$($st['fails'])"
+
+# This hook runs on every tool call, so a call that changes no signal must not
+# rewrite the state file. A failed assertion here means needless disk churn on
+# every Read and Grep.
+$statePath = Get-StatePath $sid3
+$mtBefore = (Get-Item -LiteralPath $statePath).LastWriteTimeUtc
+Start-Sleep -Milliseconds 25
+$readEvt = (@{ session_id = $sid3; cwd = $sandbox; hook_event_name = 'PostToolUse'; tool_name = 'Read'; tool_input = @{ file_path = 'C:\x\a.ts' } } | ConvertTo-Json -Compress)
+Invoke-Hook 'post-tool.ps1' $readEvt | Out-Null
+$mtAfter = (Get-Item -LiteralPath $statePath).LastWriteTimeUtc
+Check 'a no-op tool call does not rewrite state' ($mtBefore -eq $mtAfter) "$mtBefore -> $mtAfter"
+
+# The matcher in settings.json has to name every shell tool, or the hook above
+# never receives the event at all.
+$settingsPath = Join-Path $script:TunerRoot 'settings.json'
+if (Test-Path -LiteralPath $settingsPath) {
+    $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+    $matchers = @($settings.hooks.PostToolUse | ForEach-Object { [string]$_.matcher })
+    $covered = ($matchers -join ',')
+    Check 'PostToolUse matcher covers Bash and PowerShell' ($covered -match 'Bash' -and $covered -match 'PowerShell') $covered
+}
+
+# ---------- 4. stop: banners and the hard wrap ----------
+Write-Host ''
+Write-Host 'stop banner and hard wrap' -ForegroundColor Yellow
+
+$sid = New-Sid
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $large '' 'default' 'Stop')
+Check 'grace escalates instead of blocking' ($r.text -match 'escalated' -and $r.text -notmatch 'decision') $r.text
+
+$sid = New-Sid
+Invoke-Hook 'route.ps1' (New-Payload $sid $large 'carry on') | Out-Null
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
+[void]$timings.Add([pscustomobject]@{ name = 'stop'; ms = $r.ms })
+Check 'ceiling blocks the stop' ($r.text -match '"decision":"block"') $r.text
+Check 'block reason names /wrap and /clear' ($r.text -match '/wrap' -and $r.text -match '/clear') $r.text
+
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
+Check 'second stop is allowed, with the banner' ($r.text -notmatch '"decision"' -and $r.text -match 'systemMessage') $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop' $true)
+Check 'stop_hook_active suppresses the block' ($r.text -notmatch '"decision"') $r.text
+
+# A config with hardWrap off must fall back to the old banner-only behaviour.
+$noHard = Join-Path $sandbox 'nohard.json'
+# Fixtures come from the built-in defaults, never from a live install, so this
+# suite runs identically on a developer machine and in CI.
+$c = Get-TunerConfig -Defaults
+$c.hardWrap = $false
+$c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $noHard -Encoding UTF8
+$env:OPUS_TUNER_CONFIG = $noHard
+$sid = New-Sid
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
+Remove-Item Env:\OPUS_TUNER_CONFIG -ErrorAction SilentlyContinue
+Check 'hardWrap off leaves only the banner' ($r.text -notmatch '"decision"' -and $r.text -match 'systemMessage') $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $small '' 'default' 'Stop')
+Check 'stop below 70% stays silent' ($r.text.Length -eq 0) $r.text
+
+# ---------- 5. enforcement ----------
+Write-Host ''
+Write-Host 'enforcement (mode=advise)' -ForegroundColor Yellow
+
+$sid = New-Sid
+$read = (@{ session_id = $sid; cwd = $sandbox; transcript_path = $large; hook_event_name = 'PreToolUse'; tool_name = 'Read'; tool_input = @{ file_path = 'C:\big.ts' } } | ConvertTo-Json -Compress)
+$r = Invoke-Hook 'pre-tool.ps1' $read
+Check 'advise mode never blocks a read' ($r.text.Length -eq 0) $r.text
+
+# ---------- 6. handoff ----------
+Write-Host ''
+Write-Host 'handoff round trip' -ForegroundColor Yellow
+
+$briefOut = (& $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'brief.ps1') -Cwd $sandbox -Transcript $large) -join "`n"
+$briefPath = Join-Path $sandbox '.claude\handoff.md'
+Check 'brief.ps1 writes .claude/handoff.md' (Test-Path $briefPath) $briefOut
+if (Test-Path $briefPath) {
+    $t = Get-Content $briefPath -Raw
+    Check 'brief has all required sections' (
+        $t -match '## Decisions' -and $t -match '## Dead ends' -and
+        $t -match '## Unverified assumptions' -and $t -match '## Next step')
+}
+
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'clear re-seeds from the brief' ($r.text -match 'Resuming from a handoff') $r.text.Substring(0, [Math]::Min(120, $r.text.Length))
+Check 'brief consumed after re-seed' (-not (Test-Path $briefPath) -and (Test-Path (Join-Path $sandbox '.claude\handoff.consumed.md')))
+
+# The VS Code panel often starts a new conversation as 'startup', not 'clear'.
+Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nrun the tests" -Encoding UTF8
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'fresh startup re-seeds (VS Code new chat)' ($r.text -match 'Resuming from a handoff') $r.text
+Check 'startup consumes the brief' (-not (Test-Path $briefPath))
+
+Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nstale work" -Encoding UTF8
+(Get-Item -LiteralPath $briefPath).LastWriteTime = (Get-Date).AddDays(-3)
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'stale startup brief is ignored' ($r.text.Length -eq 0 -and (Test-Path $briefPath)) $r.text
+Remove-Item -LiteralPath $briefPath -Force
+
+Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nresume work" -Encoding UTF8
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'resume'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'resume does not inject the brief' ($r.text.Length -eq 0)
+Remove-Item -LiteralPath $briefPath -Force
+
+$sid = New-Sid
+Set-Content -LiteralPath (Get-StatePath $sid) -Value '{"tier":"deep","gear":"high","files":[],"fails":0,"maxUses":0,"nudged":{"soft":false,"ceiling":false,"escalated":false}}' -Encoding UTF8
+Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'resume'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress) | Out-Null
+Check 'resume keeps the deep tier' ((Read-State $sid)['tier'] -eq 'deep')
+
+$sid = New-Sid
+Set-Content -LiteralPath (Get-StatePath $sid) -Value '{"tier":"deep","gear":"high","files":[],"fails":0,"maxUses":0,"nudged":{"soft":false,"ceiling":false,"escalated":false}}' -Encoding UTF8
+Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress) | Out-Null
+Check 'startup resets to routine' ((Read-State $sid)['tier'] -eq 'routine')
+
+# mode: off is documented as silencing everything; the brief re-seed is part of
+# the bundle, so it must be silent too - otherwise "off" still spends tokens.
+$offCfg = Join-Path $sandbox 'off.json'
+# Fixtures come from the built-in defaults, never from a live install, so this
+# suite runs identically on a developer machine and in CI.
+$c = Get-TunerConfig -Defaults
+$c.mode = 'off'
+$c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $offCfg -Encoding UTF8
+Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nshould not load" -Encoding UTF8
+$env:OPUS_TUNER_CONFIG = $offCfg
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Remove-Item Env:\OPUS_TUNER_CONFIG -ErrorAction SilentlyContinue
+Check 'mode off silences session start' ($r.text.Length -eq 0 -and (Test-Path $briefPath)) $r.text
+Remove-Item -LiteralPath $briefPath -Force -ErrorAction SilentlyContinue
+
+# ---------- 7. status line ----------
+Write-Host ''
+Write-Host 'status line' -ForegroundColor Yellow
+
+$sid = New-Sid
+$sl = (@{
+    session_id     = $sid
+    cwd            = $sandbox
+    model          = @{ display_name = 'Opus 5.5' }
+    context_window = @{ total_input_tokens = 92000 }
+    effort         = @{ level = 'high' }
+    rate_limits    = @{ five_hour = @{ used_percentage = 41 }; seven_day = @{ used_percentage = 12 } }
+} | ConvertTo-Json -Compress -Depth 5)
+$r = Invoke-Hook 'statusline.ps1' $sl
+[void]$timings.Add([pscustomobject]@{ name = 'statusline'; ms = $r.ms })
+Check 'status line renders context vs ceiling' ($r.text -match '/150k') $r.text
+Check 'status line shows the 5h window' ($r.text -match '5h 41%') $r.text
+
+# ---------- 8. decision log ----------
+Write-Host ''
+Write-Host 'decision log' -ForegroundColor Yellow
+
+$logPath = Join-Path $env:OPUS_TUNER_STATE 'decisions.csv'
+Check 'decisions.csv written' (Test-Path -LiteralPath $logPath) $logPath
+if (Test-Path -LiteralPath $logPath) {
+    $logRows = @(Import-Csv -LiteralPath $logPath)
+    $gears = @($logRows | Where-Object { $_.action -like 'gear-*' }).Count
+    $escs = @($logRows | Where-Object { $_.action -like 'escalate-*' }).Count
+    $wraps = @($logRows | Where-Object { $_.action -eq 'hard-wrap' }).Count
+    Check 'gears, escalations and hard wraps all logged' ($gears -gt 0 -and $escs -gt 0 -and $wraps -gt 0) "gear=$gears escalate=$escs hardwrap=$wraps"
+}
+
+$stats = & $Interpreter -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here 'stats.ps1') -All 2>&1
+$statsText = ($stats | Where-Object { $_ -is [string] }) -join "`n"
+Check 'stats.ps1 summarizes the log' ($statsText -match 'by action' -and $statsText -match 'hard-wrap') $statsText.Substring(0, [Math]::Min(200, $statsText.Length))
+
+# ---------- 9. timing ----------
+Write-Host ''
+Write-Host 'timing (UserPromptSubmit and Stop block the session; PostToolUse is async)' -ForegroundColor Yellow
+$budget = $BudgetMs
+$worst = ($timings | Measure-Object -Property ms -Maximum).Maximum
+foreach ($t in $timings) {
+    $flag = if ($t.ms -gt $budget) { 'SLOW' } else { 'ok' }
+    Write-Host ("  {0,-12} {1,4} ms  {2}" -f $t.name, $t.ms, $flag)
+}
+# Floor on Windows PowerShell 5.1: ~150 ms to spawn the process, ~50 ms to parse
+# this bundle, ~90 ms for the first ConvertFrom-Json (assembly load), ~100 ms for
+# the first transcript read and regex use. The scripts' own work is ~20 ms warm.
+# pwsh 7 measured slower on the development machine - see the README before
+# "fixing" that, and re-measure on your own hardware.
+Check "every hook under $budget ms" ($worst -lt $budget) "worst=${worst}ms"
+
+# ---------- cleanup ----------
+foreach ($s in $createdStates) {
+    $p = Get-StatePath $s
+    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+}
+# Belt and braces: anything the run created but did not track (a script that
+# failed before recording its id) would otherwise linger as a fake session.
+Get-ChildItem -LiteralPath $script:TunerState -Filter 'st-*.json' -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -ge $startedAt } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
+
+Write-Host ''
+if ($fail -eq 0) {
+    Write-Host "$pass passed, 0 failed" -ForegroundColor Green
+    exit 0
+} else {
+    Write-Host "$pass passed, $fail failed" -ForegroundColor Red
+    exit 1
+}
