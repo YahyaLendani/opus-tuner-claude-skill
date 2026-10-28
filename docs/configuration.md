@@ -176,6 +176,12 @@ that the state directory is writable, and — on POSIX — that `pwsh` is on `PA
 Exit code 0 means healthy; `-Json` gives the same result as machine-readable
 output. `-Root <dir>` checks a different config dir.
 
+Add `-Replay` to execute each registered command exactly as written, in a
+throwaway config dir: six events, exit 0, and empty-or-valid-JSON output. It adds
+about 3 seconds and catches what registration alone cannot — a quoting error in
+the command string, a shell that cannot start the interpreter, or a hook that
+writes non-JSON to stdout.
+
 In `-NoHooks` (advisory) mode the hook checks report "no hooks registered" rather
 than failing, because that is the intended state.
 

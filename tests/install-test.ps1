@@ -143,6 +143,19 @@ try {
     & $Interpreter @ExePrefix -File $doctor | Out-Null
     Check 'doctor reports a healthy install' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
 
+    # -Replay executes the command strings from settings.json, which is the only
+    # check that catches a quoting error or a shell that cannot start the
+    # interpreter. Registration plus a script that parses does not prove either.
+    $replayOut = (& $Interpreter @ExePrefix -File $doctor -Replay 2>&1) -join "`n"
+    Check 'doctor -Replay passes on a healthy install' ($LASTEXITCODE -eq 0) $replayOut
+
+    $settingsFile = Join-Path $sandbox 'settings.json'
+    $rawSettings = Get-Content -LiteralPath $settingsFile -Raw -Encoding UTF8
+    [System.IO.File]::WriteAllText($settingsFile, ($rawSettings -replace 'stop\.ps1', 'stop-missing.ps1'), (New-Object System.Text.UTF8Encoding($false)))
+    $brokenOut = (& $Interpreter @ExePrefix -File $doctor -Replay 2>&1) -join "`n"
+    Check 'doctor -Replay catches a broken hook command' ($LASTEXITCODE -eq 1 -and $brokenOut -match 'replay Stop') $brokenOut
+    [System.IO.File]::WriteAllText($settingsFile, $rawSettings, (New-Object System.Text.UTF8Encoding($false)))
+
     $badCfg = Join-Path $sandbox 'tuner.config.json'
     [System.IO.File]::WriteAllText($badCfg, '{ "routineTokens": 150000,', (New-Object System.Text.UTF8Encoding($false)))
     $docOut = (& $Interpreter @ExePrefix -File $doctor 2>&1) -join "`n"

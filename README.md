@@ -12,7 +12,7 @@ re-read it for work that did not need it.
 Six hooks, seven skills, a handoff writer, four effort gears, and a measuring
 tool. No network calls, no API keys, no dependencies.
 
-> **Status:** 0.3.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.3.1. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -142,11 +142,14 @@ Hooks only exist in Claude Code. Two fallbacks:
 # (56 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
-# 48 assertions: install/upgrade/uninstall, -NoHooks, hook shape, against a sandbox
+# 50 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, against a sandbox
 powershell -NoProfile -File tests\install-test.ps1
 
 # is the install healthy? hooks registered, scripts present, config valid
 powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1
+
+# prove the registered command strings actually run (all six events, ~3 s)
+powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1 -Replay
 ```
 
 ```sh
@@ -154,12 +157,19 @@ powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1
 pwsh -NoProfile -File skills/opus-tuner/scripts/selftest.ps1
 pwsh -NoProfile -File tests/install-test.ps1
 pwsh -NoProfile -File skills/opus-tuner/scripts/doctor.ps1
+pwsh -NoProfile -File skills/opus-tuner/scripts/doctor.ps1 -Replay
 ```
 
 `selftest.ps1` picks `pwsh` when it is on `PATH`, otherwise `powershell`. Pass
 `-Interpreter powershell` to force 5.1 on Windows, or `-BudgetMs 3000` on a busy
 CI runner. `doctor.ps1` exits non-zero when something is broken, so it works as
 a post-install gate.
+
+`doctor.ps1` alone proves the hooks are *registered* and their scripts exist.
+`-Replay` goes further: it runs each registered command exactly as written, in a
+throwaway config dir, and asserts exit 0 plus empty-or-valid-JSON output. That is
+what catches a quoting error in the command string or a shell that cannot start
+the interpreter — failures that look identical to "no hooks" at runtime.
 
 In Claude Code, `/hooks` should list `UserPromptSubmit`, `PostToolUse`,
 `PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact`; `/skills` should list

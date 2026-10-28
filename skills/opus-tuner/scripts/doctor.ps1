@@ -4,15 +4,24 @@
 #   powershell -NoProfile -File doctor.ps1
 #   powershell -NoProfile -File doctor.ps1 -Json
 #   powershell -NoProfile -File doctor.ps1 -Root C:\temp\sandbox
+#   powershell -NoProfile -File doctor.ps1 -Replay
 #
 # Exit code 0 means everything it checks is healthy, 1 means something needs
 # attention. It is read-only apart from a probe file in the state directory, and
 # it never touches a transcript.
+#
+# -Replay goes one step further than registration: it executes each registered
+# command exactly as written, in a throwaway config dir, and asserts exit 0 and
+# empty-or-valid-JSON output. Registration plus a script that parses is not the
+# same as a hook that runs: a quoting error in the command string, or a shell
+# that cannot find the interpreter, fails only at invocation time.
 
 param(
     [switch]$Json,
     # Check a different config dir than the one in use.
-    [string]$Root = ''
+    [string]$Root = '',
+    # Execute the registered commands, not just check that they exist.
+    [switch]$Replay
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,6 +59,43 @@ function Get-HookPaths {
         }
     }
     return , $out
+}
+
+# Run one registered command the way Claude Code would: the command string from
+# settings.json, through the shell declared next to it, with a realistic payload
+# on stdin. The config dir is redirected so state and the decision log land in a
+# sandbox rather than the live install.
+function Invoke-RegisteredHook {
+    param($Settings, [string]$Event, [string]$Payload, [string]$ConfigDir)
+
+    $group = @($Settings.hooks.$Event) | Where-Object {
+        (@($_.hooks | ForEach-Object { [string]$_.command }) -join ' ') -match 'opus-tuner[/\\]scripts[/\\]'
+    } | Select-Object -First 1
+    if (-not $group) { return @{ ran = $false; detail = 'no opus-tuner hook registered' } }
+
+    $h = @($group.hooks)[0]
+    $cmd = [string]$h.command
+    $shell = [string]$h.shell
+    $errFile = Join-Path $ConfigDir ("replay-$Event.err")
+
+    $prev = $env:CLAUDE_CONFIG_DIR
+    $env:CLAUDE_CONFIG_DIR = $ConfigDir
+    try {
+        if ($script:OnWindows -and $shell -ne 'bash') {
+            $out = $Payload | & powershell -NoProfile -ExecutionPolicy Bypass -Command $cmd 2> $errFile
+        } elseif ($script:OnWindows) {
+            $out = $Payload | & bash -c $cmd 2> $errFile
+        } else {
+            $out = $Payload | & sh -c $cmd 2> $errFile
+        }
+        $code = $LASTEXITCODE
+        $err = if (Test-Path -LiteralPath $errFile) { (Get-Content -LiteralPath $errFile -Raw) } else { '' }
+        return @{ ran = $true; code = $code; text = (@($out) -join "`n"); err = [string]$err }
+    } catch {
+        return @{ ran = $false; detail = $_.Exception.Message }
+    } finally {
+        $env:CLAUDE_CONFIG_DIR = $prev
+    }
 }
 
 $expected = [ordered]@{
@@ -99,6 +145,61 @@ if ($settings) {
     if ($settings.modelSettings -and $settings.modelSettings.'claude-opus-5-5') {
         $lvl = [string]$settings.modelSettings.'claude-opus-5-5'.effortLevel
         Add-Check 'Opus 5.5 effort level valid' (@('low', 'medium', 'high', 'xhigh') -contains $lvl) $lvl
+    }
+}
+
+# ---------- replay ----------
+if ($Replay) {
+    if (-not $settings) {
+        Add-Check 'replay: settings.json available' $false 'install first'
+    } else {
+        $replayRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('opus-tuner-replay-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        $replayProject = Join-Path $replayRoot 'project'
+        $replayClaude = Join-Path $replayProject '.claude'
+        New-Item -ItemType Directory -Force -Path $replayClaude | Out-Null
+        # A brief makes SessionStart emit real JSON, so the replay exercises the
+        # output shape rather than only the empty-output path.
+        [System.IO.File]::WriteAllText((Join-Path $replayClaude 'handoff.md'),
+            "# Handoff - replay`n`n## Next step`n- replay the wiring`n",
+            (New-Object System.Text.UTF8Encoding($false)))
+
+        $cases = @(
+            @{ event = 'SessionStart'; payload = @{ session_id = 'replay-start'; cwd = $replayProject; hook_event_name = 'SessionStart'; source = 'clear' } },
+            @{ event = 'UserPromptSubmit'; payload = @{ session_id = 'replay-route'; cwd = $replayProject; hook_event_name = 'UserPromptSubmit'; prompt = 'refactor the auth module, then fix the failing test suite'; transcript_path = '' } },
+            @{ event = 'PostToolUse'; payload = @{ session_id = 'replay-post'; cwd = $replayProject; hook_event_name = 'PostToolUse'; tool_name = 'Edit'; tool_input = @{ file_path = (Join-Path $replayProject 'a.ts') } } },
+            @{ event = 'PostToolUseFailure'; payload = @{ session_id = 'replay-post-fail'; cwd = $replayProject; hook_event_name = 'PostToolUseFailure'; tool_name = 'Bash'; tool_input = @{ command = 'npm test' } } },
+            @{ event = 'Stop'; payload = @{ session_id = 'replay-stop'; cwd = $replayProject; hook_event_name = 'Stop'; stop_hook_active = $false; transcript_path = '' } },
+            @{ event = 'PreCompact'; payload = @{ session_id = 'replay-compact'; cwd = $replayProject; hook_event_name = 'PreCompact'; trigger = 'auto'; transcript_path = '' } }
+        )
+
+        foreach ($c in $cases) {
+            $name = "replay $($c.event)"
+            # Not $json: PowerShell is case-insensitive, and this script's -Json
+            # parameter is a [switch], so assigning a string to it fails.
+            $payloadJson = $c['payload'] | ConvertTo-Json -Depth 8 -Compress
+            $r = Invoke-RegisteredHook $settings $c.event $payloadJson $replayRoot
+            if (-not $r['ran']) {
+                Add-Check $name $false ([string]$r['detail'])
+                continue
+            }
+            Add-Check "$name exits 0" ([int]$r['code'] -eq 0) ("exit {0} {1}" -f $r['code'], ([string]$r['err']).Trim())
+
+            $text = ([string]$r['text']).Trim()
+            $valid = $true
+            $why = ''
+            if ($text) {
+                try { $null = $text | ConvertFrom-Json } catch {
+                    $valid = $false
+                    $why = 'not JSON: ' + $text.Substring(0, [Math]::Min(100, $text.Length))
+                }
+            }
+            Add-Check "$name emits empty or JSON" $valid $why
+            if ($c.event -eq 'SessionStart') {
+                Add-Check 'replay SessionStart re-seeds the brief' ($text -match 'additionalContext') $text
+            }
+        }
+
+        Remove-Item -Recurse -Force $replayRoot -ErrorAction SilentlyContinue
     }
 }
 
@@ -175,6 +276,7 @@ if ($Json) {
 $section = ''
 foreach ($c in $checks) {
     $group = switch -Regex ($c.check) {
+        '^replay' { 'replay'; break }
         '^(settings|UserPromptSubmit|PostToolUse|PostToolUseFailure|Stop|SessionStart|PreCompact|PreToolUse|status|Opus)' { 'wiring'; break }
         '^(routineTokens|deepTokens|mode|tuner)' { 'configuration'; break }
         '^skill' { 'skills'; break }

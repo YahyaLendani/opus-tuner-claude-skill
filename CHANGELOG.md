@@ -3,6 +3,27 @@
 All notable changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-10-28
+
+Proof of wiring, without waiting for a prompt.
+
+### Added
+
+- `doctor.ps1 -Replay`: executes each registered hook command exactly as written
+  in `settings.json`, in a throwaway config dir, and asserts exit 0 plus
+  empty-or-valid-JSON output. Registration plus a script that parses is not the
+  same as a hook that runs: a quoting error in the command string, or a shell
+  that cannot start the interpreter, fails only at invocation time and looks
+  identical to "no hooks". The installer test now covers both the passing replay
+  and a deliberately broken command.
+
+### Notes
+
+- Self-test: 57 assertions. Installer test: 50 assertions (was 48).
+- Found while adding this: a local `$json` in a script with a `[switch]$Json`
+  parameter is the same variable, so assigning a string to it throws a
+  `SwitchParameter` conversion error. Noted in `CONTRIBUTING.md`.
+
 ## [0.3.0] - 2026-10-28
 
 Reach. The bundle was correct but Windows-only, VS Code-shaped, and useless

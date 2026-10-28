@@ -18,6 +18,15 @@
    missing script, a config that does not parse, a skill folder without a matching
    `name:`, an unwritable state directory, or — on POSIX — a missing `pwsh`.
 
+   If the doctor is healthy but nothing fires, add `-Replay`. It executes each
+   registered command exactly as written, which is the only way to catch a
+   quoting error in the command string or a shell that cannot start the
+   interpreter:
+
+   ```powershell
+   powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\doctor.ps1" -Replay
+   ```
+
 1. **Reload.** Claude Code reads hook configuration at session start. Restart it,
    or use *Developer: Reload Window* in VS Code.
 2. Check `/hooks`. You should see `UserPromptSubmit`, `PostToolUse`,
