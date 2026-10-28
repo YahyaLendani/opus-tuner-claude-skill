@@ -1,5 +1,7 @@
 # opus-tuner
 
+[![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml)
+
 **Cost control for long Claude Code sessions on Windows.**
 
 Claude Code bills by *context size × number of turns*. This bundle keeps the
@@ -10,9 +12,9 @@ re-read it for work that did not need it.
 Five hooks, a handoff skill, four effort gears, and a measuring tool. No network
 calls, no API keys, no dependencies.
 
-> **Status:** 0.1.0. Windows PowerShell 5.1 is the supported runtime. The scripts
-> are PowerShell, so `pwsh` 7 on macOS/Linux will probably work, but it is
-> untested — see [docs/troubleshooting.md](docs/troubleshooting.md).
+> **Status:** 0.1.0. Windows PowerShell 5.1 is the supported runtime. Both suites
+> also run under `pwsh` 7 in CI (non-blocking); macOS and Linux are untested —
+> see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ---
 

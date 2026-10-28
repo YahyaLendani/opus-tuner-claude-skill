@@ -1,4 +1,4 @@
-name: test
+﻿name: test
 
 on:
   push:
@@ -13,7 +13,7 @@ jobs:
     name: Windows PowerShell 5.1
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Every script parses
         shell: powershell
@@ -43,7 +43,7 @@ jobs:
     runs-on: windows-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Self-test under pwsh
         shell: pwsh

@@ -98,8 +98,8 @@ next to the skill.
 
 ## macOS and Linux
 
-Untested. The scripts are PowerShell and mostly portable, but the hook entries
-use `shell: "powershell"` and the installer writes Windows paths. If you want to
-try, install `pwsh`, change the hook shell to `pwsh`, and expect path and
-encoding fixes. PRs are welcome, but the supported runtime is Windows PowerShell
-5.1.
+Untested. The scripts are PowerShell and pass both suites under `pwsh` 7 on
+Windows in CI, but the hook entries use `shell: "powershell"` and the installer
+writes Windows paths. If you want to try, install `pwsh`, change the hook shell
+to `pwsh`, and expect path and encoding fixes. PRs are welcome, but the supported
+runtime is Windows PowerShell 5.1.
