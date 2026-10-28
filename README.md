@@ -4,7 +4,7 @@
 [![version](https://img.shields.io/badge/version-0.3.2-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/github/license/YahyaLendani/opus-tuner)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)](docs/platforms.md)
-[![code](https://img.shields.io/github/languages/top/YahyaLendani/opus-tuner?label=code)](https://github.com/YahyaLendani/opus-tuner/search?l=powershell)
+[![code](https://img.shields.io/github/languages/top/YahyaLendani/opus-tuner)](https://github.com/YahyaLendani/opus-tuner/search?l=powershell)
 [![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](#design-constraints)
 
 **Cost control for long Claude Code sessions on Windows, macOS and Linux.**
