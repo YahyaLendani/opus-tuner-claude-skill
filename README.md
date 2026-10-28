@@ -165,8 +165,11 @@ pwsh -NoProfile -File skills/opus-tuner/scripts/doctor.ps1 -Replay
 
 `selftest.ps1` picks `pwsh` when it is on `PATH`, otherwise `powershell`. Pass
 `-Interpreter powershell` to force 5.1 on Windows, or `-BudgetMs 3000` on a busy
-CI runner. `doctor.ps1` exits non-zero when something is broken, so it works as
-a post-install gate.
+CI runner. The timing gate charges the interpreter's own start to the platform:
+a no-op script is timed three times, the minimum is subtracted, and the budget
+applies to the hook's own cost — so a cold shared runner does not fail the build
+for a hook whose real work is ~20 ms. `doctor.ps1` exits non-zero when something
+is broken, so it works as a post-install gate.
 
 `doctor.ps1` alone proves the hooks are *registered* and their scripts exist.
 `-Replay` goes further: it runs each registered command exactly as written, in a

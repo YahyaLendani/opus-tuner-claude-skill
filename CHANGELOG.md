@@ -21,6 +21,13 @@ The doctor stops crying wolf on a skills-only install.
   take precedence.
 - `-Json` reports `advisory` and `skipped` alongside `ok` and `failed`.
 
+### Fixed
+
+- The self-test timing gate charged the interpreter's cold start to the hooks, so
+  a shared macOS runner failed at 3120 ms against a 3000 ms budget for a hook
+  whose own work is ~20 ms. It now times a no-op script three times, subtracts
+  the minimum, and gates on the hook's own cost; the report prints both numbers.
+
 ### Notes
 
 - Self-test: 57 assertions. Installer test: 53 assertions (was 50), now covering
