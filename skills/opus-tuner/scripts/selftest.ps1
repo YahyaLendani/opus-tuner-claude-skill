@@ -277,6 +277,12 @@ $r = Invoke-Hook 'pre-compact.ps1' $manual
 Check 'first manual /compact is blocked' ($r.text -match '"decision":"block"') $r.text
 Check 'compact reason names /wrap and /clear' ($r.text -match '/wrap' -and $r.text -match '/clear') $r.text
 
+# A refusal is not a compaction. One row, action=compact-blocked: otherwise
+# stats.ps1 would report refusals as the thing it is trying to count.
+$logPath = Join-Path $env:OPUS_TUNER_STATE 'decisions.csv'
+$mine = @(Import-Csv -LiteralPath $logPath | Where-Object { $_.session -eq $sid.Substring(0, 8) })
+Check 'blocked /compact logs one blocked row' (@($mine | Where-Object { $_.action -eq 'compact-blocked' }).Count -eq 1 -and @($mine | Where-Object { $_.action -eq 'compact-manual' }).Count -eq 0) (@($mine.action) -join ',')
+
 $r = Invoke-Hook 'pre-compact.ps1' $manual
 Check 'second manual /compact is allowed' ($r.text.Length -eq 0) $r.text
 

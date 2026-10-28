@@ -41,7 +41,7 @@ a hand-written checklist, and could not compare two weeks of numbers.
 
 ### Notes
 
-- Self-test: 56 assertions (55 without a `settings.json` to inspect). Installer
+- Self-test: 57 assertions (56 without a `settings.json` to inspect). Installer
   test: 43 assertions, now covering the `PreCompact` wiring and `doctor.ps1`.
 
 ## [0.1.0] - 2026-10-28

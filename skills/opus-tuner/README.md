@@ -59,7 +59,7 @@ the test suites stay away from a live install.
 | `stats.ps1` | manual | what the tuner decided: actions, context at each, per day |
 | `doctor.ps1` | manual | install health check: hook wiring, config validity, skills, script parse, state writable |
 | `statusline.ps1` | status line | live `ctx/ceiling`, tier, effort, 5h and 7d windows |
-| `selftest.ps1` | manual / CI | 56 assertions against a synthetic transcript |
+| `selftest.ps1` | manual / CI | 57 assertions against a synthetic transcript |
 
 ## Hard wrap
 

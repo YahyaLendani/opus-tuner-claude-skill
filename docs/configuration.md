@@ -102,7 +102,9 @@ Auto-compaction is **never** blocked. When it fires to recover from a
 context-limit error the API already returned, blocking it surfaces that error and
 fails the request. Every compaction, manual or auto, is still recorded in the
 decision log (`compact-manual`, `compact-auto`, `compact-blocked`), so `stats.ps1`
-can tell you how often the thing this bundle exists to avoid actually happens.
+can tell you how often the thing this bundle exists to avoid actually happens. A
+refused `/compact` is logged as `compact-blocked` **instead of** `compact-manual`:
+one row per event, so a refusal never inflates the count.
 
 `"blockManualCompact": false` keeps the logging and drops the block.
 

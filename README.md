@@ -99,8 +99,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
 ## Verify
 
 ```powershell
-# 56 assertions: routing, hard wrap, compaction, handoff round trip, audit, timing
-# (55 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
+# 57 assertions: routing, hard wrap, compaction, handoff round trip, audit, timing
+# (56 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
 # 43 assertions: install/upgrade/uninstall against a sandbox config dir

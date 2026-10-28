@@ -32,17 +32,19 @@ try {
     $ceiling = Get-Ceiling $cfg $tier
     $ctx = [int64](Get-ContextInfo -TranscriptPath ([string]$in['transcript_path'])).ctx
 
-    Write-Decision $cfg $sid $ctx $tier $gear "compact-$trigger"
-
-    if ($trigger -ne 'manual') { exit 0 }
-
+    # One row per event, and only one. A refused /compact is not a compaction:
+    # logging both would make stats.ps1 count refusals as the thing it measures.
     $blockManual = $true
     if ($cfg.ContainsKey('blockManualCompact')) { $blockManual = [bool]$cfg['blockManualCompact'] }
-    if (-not $blockManual) { exit 0 }
 
     # One shot per session, like the hard wrap. A second /compact means the user
     # heard the reason and still wants it; refusing again would be a trap.
-    if ([bool]$state['nudged']['compact']) { exit 0 }
+    $willBlock = ($trigger -eq 'manual' -and $blockManual -and -not [bool]$state['nudged']['compact'])
+
+    if (-not $willBlock) {
+        Write-Decision $cfg $sid $ctx $tier $gear "compact-$trigger"
+        exit 0
+    }
 
     $state['nudged']['compact'] = $true
     Write-State $sid $state
