@@ -23,6 +23,11 @@ Proof of wiring, without waiting for a prompt.
 
 ### Notes
 
+- Verified live on Claude Code 2.1.267, not only replayed: all six events fire.
+  `SessionStart` (`startup` and `resume`), `UserPromptSubmit`, `PostToolUse`
+  (`Write`), `PostToolUseFailure` (`Bash`, recorded as `fails: 1`), `Stop`, and
+  `PreCompact` (manual `/compact` refused once and logged as `compact-blocked`
+  at `ctx=27646`, `tier=routine`, `gear=high`).
 - Self-test: 57 assertions. Installer test: 50 assertions (was 48).
 - Found while adding this: a local `$json` in a script with a `[switch]$Json`
   parameter is the same variable, so assigning a string to it throws a
