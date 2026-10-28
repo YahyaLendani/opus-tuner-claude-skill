@@ -239,3 +239,9 @@ First public release.
 - Windows PowerShell 5.1 is the supported runtime. `pwsh` 7 works but was
   measured slower on the development machine; see the latency section.
 - Hooks fail open: any error exits 0 and lets Claude Code continue.
+
+[0.4.1]: https://github.com/YahyaLendani/opus-tuner/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/YahyaLendani/opus-tuner/releases/tag/v0.4.0
+
+<!-- Entries below 0.4.0 predate tagging, so their headings are plain text: a
+     compare link to a tag that does not exist would be worse than none. -->

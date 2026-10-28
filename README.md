@@ -47,6 +47,23 @@ or clear it for you.
 
 ## What it does
 
+The status line is the whole state at a glance — context against the ceiling, the
+tier, the effort level, and both rate-limit windows:
+
+```text
+Opus 5.5 | high | [#####.....] 78k/150k 52% | routine | 5h 34% | 7d 12%
+```
+
+At 70% it adds one line, and at the ceiling it adds the instruction that matters:
+
+```text
+Opus 5.5 | high | [########..] 132k/150k 88% | routine | 5h 61% | 7d 22%
+-> finish this unit, then /wrap
+```
+
+That is the real output of `statusline.ps1` for a sample session, with the colour
+codes stripped. The bar turns yellow at 70% and red at 90%.
+
 | Mechanism | Behaviour |
 |---|---|
 | **Tiered ceilings** | 150k routine, 250k deep. Deep is for refactors, hard debugging, architecture. Escalate-only: a session never drops back mid-flight. |
@@ -296,6 +313,7 @@ uninstaller rather than deleting folders by hand.
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Hooks not firing, `pwsh` missing, VS Code quirks, quota questions |
 | [docs/decisions.md](docs/decisions.md) | Why the design is shaped this way |
 | [SECURITY.md](SECURITY.md) | Trust boundary, what the scripts read and write, how to report a vulnerability |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | What is expected here, and the one private channel for reporting a problem |
 | [skills/opus-tuner/README.md](skills/opus-tuner/README.md) | Technical reference for the installed skill |
 | [skills/claude-skill/SKILL.md](skills/claude-skill/SKILL.md) | Portable, hook-free version for Desktop and claude.ai |
 

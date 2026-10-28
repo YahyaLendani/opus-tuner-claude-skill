@@ -1,0 +1,21 @@
+# https://editorconfig.org
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Two trailing spaces are a hard line break in Markdown, so do not strip them.
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+# A CRLF shebang does not run on macOS or Linux. .gitattributes pins this too;
+# the editor has to agree or every save reintroduces CRLF.
+[*.sh]
+end_of_line = lf

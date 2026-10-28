@@ -25,6 +25,9 @@ PowerShell scripts, no dependencies, and a test suite that must stay green.
   Linux; it fails before the script runs. Build an `$ExePrefix` the way
   `selftest.ps1` does.
 
+Behaviour in issues and pull requests is covered by
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
 ## Layout
 
 ```
@@ -111,7 +114,9 @@ request. Run both before touching the README.
 ## Releasing
 
 1. Bump `skills/opus-tuner/VERSION`, add the `CHANGELOG.md` entry, and update the
-   `> **Status:**` line in `README.md` to the same number.
+   `> **Status:**` line in `README.md` to the same number. Add a
+   `[X.Y.Z]: …/compare/vPREV...vX.Y.Z` definition at the bottom of the changelog
+   so the heading links to the diff.
 2. Push and wait for CI. The `Version is consistent` step fails if the three
    disagree, so a forgotten bump cannot reach a tag.
 3. Tag and publish, replacing `vX.Y.Z` with the version in `VERSION`:
