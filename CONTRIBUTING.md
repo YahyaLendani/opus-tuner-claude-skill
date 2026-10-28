@@ -111,6 +111,10 @@ file is executable, that the shebang survives checkout (`.gitattributes` pins
   platform quirk, say so and give the number.
 - Do not add a knob without a default that preserves current behaviour.
 - Update `CHANGELOG.md` for user-visible changes.
+- The `version` badge at the top of `README.md` is a static shields.io badge. Bump
+  it in the same commit as the `CHANGELOG.md` entry, or it will advertise a version
+  that no longer exists. The other badges are live: CI, license, and the language
+  split come from GitHub, so they cannot drift.
 - **Never name a local `$json` in a script that has a `-Json` switch.** PowerShell
   variables are case-insensitive, so `$json` *is* `$Json`, and assigning a string
   to a `[switch]` throws a `SwitchParameter` conversion error. The same trap
