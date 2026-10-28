@@ -16,6 +16,10 @@ Proof of wiring, without waiting for a prompt.
   that cannot start the interpreter, fails only at invocation time and looks
   identical to "no hooks". The installer test now covers both the passing replay
   and a deliberately broken command.
+- `weekly.ps1`: finds the newest `baseline-*.csv`, runs `audit.ps1 -Baseline` and
+  `stats.ps1 -Days 7`, and writes the combined report to
+  `state/tuner/weekly-YYYY-MM-DD.txt`. `-Days`, `-Recent`, `-Baseline` and
+  `-NoFile` adjust it. Removes the need to remember two commands a week later.
 
 ### Notes
 

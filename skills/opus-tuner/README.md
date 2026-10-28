@@ -60,6 +60,7 @@ the test suites stay away from a live install.
 | `ctx.ps1` | manual | current context vs ceiling |
 | `audit.ps1` | manual | per-session cache read/write, output, peak context, cost; `-Baseline x.csv` prints deltas |
 | `stats.ps1` | manual | what the tuner decided: actions, context at each, per day |
+| `weekly.ps1` | manual | audit + stats against the newest baseline, written to `state/tuner/weekly-<date>.txt` |
 | `doctor.ps1` | manual | install health check: hook wiring, config validity, skills, script parse, state writable. `-Replay` executes the registered commands too |
 | `statusline.ps1` | status line | live `ctx/ceiling`, tier, effort, 5h and 7d windows |
 | `selftest.ps1` | manual / CI | 57 assertions against a synthetic transcript |

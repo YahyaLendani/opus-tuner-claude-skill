@@ -115,3 +115,28 @@ peak context, cost, and cost per request.
 Only compare against a CSV written by the current parser. The first version of
 `audit.ps1` double-counted every figure, so a baseline from it is exactly 2×
 wrong and the deltas will be meaningless.
+
+## One command a week
+
+`weekly.ps1` does the two commands above without you having to remember either
+of them. It picks the newest `baseline-*.csv` in the state directory, runs
+`audit.ps1 -Recent 20 -Baseline` against it, runs `stats.ps1 -Days 7`, prints the
+combined report, and writes it to `state/tuner/weekly-YYYY-MM-DD.txt`.
+
+```powershell
+# Windows
+powershell -NoProfile -File skills\opus-tuner\scripts\weekly.ps1
+```
+
+```sh
+# macOS / Linux
+pwsh -NoProfile -File skills/opus-tuner/scripts/weekly.ps1
+```
+
+`-Days 14` widens the decision window, `-Baseline path.csv` overrides the
+auto-pick, and `-NoFile` prints without writing. Run it a week after the change,
+not the same day: peak context and cache read need real sessions to move.
+
+A report that says "no decisions logged yet" is not an error — the router logs a
+row only when it changes something (tier or gear), so a quiet week means the
+thresholds were not crossed, not that the hooks are dead.

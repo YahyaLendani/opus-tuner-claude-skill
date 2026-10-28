@@ -211,6 +211,9 @@ powershell -NoProfile -File skills\opus-tuner\scripts\audit.ps1 -Recent 20 -Base
 
 # what the router decided, last 7 days
 powershell -NoProfile -File skills\opus-tuner\scripts\stats.ps1 -Days 7
+
+# both of the above against the newest baseline, written to state/tuner/weekly-<date>.txt
+powershell -NoProfile -File skills\opus-tuner\scripts\weekly.ps1
 ```
 
 ```sh
@@ -218,6 +221,7 @@ powershell -NoProfile -File skills\opus-tuner\scripts\stats.ps1 -Days 7
 pwsh -NoProfile -File skills/opus-tuner/scripts/audit.ps1 -Recent 20
 pwsh -NoProfile -File skills/opus-tuner/scripts/audit.ps1 -Recent 20 -Baseline baseline.csv
 pwsh -NoProfile -File skills/opus-tuner/scripts/stats.ps1 -Days 7
+pwsh -NoProfile -File skills/opus-tuner/scripts/weekly.ps1
 ```
 
 Take a baseline **before** tuning (`audit.ps1 -Csv baseline.csv`), then pass it
