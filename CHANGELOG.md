@@ -20,7 +20,8 @@ First public release.
   and a CSV decision log.
 - `install.ps1` / `uninstall.ps1` with idempotent `settings.json` merging and
   timestamped backups.
-- Self-test (45 assertions) and installer test (38 assertions), both sandboxed.
+- Self-test (45 assertions; 44 when no `settings.json` exists to inspect) and
+  installer test (38 assertions), both sandboxed.
 - GitHub Actions workflow running both suites on Windows.
 
 ### Notes
