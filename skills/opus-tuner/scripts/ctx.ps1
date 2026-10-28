@@ -37,7 +37,8 @@ try {
             transcript = $Transcript
         }
     } else {
-        "ctx {0} / {1} ({2}%)  tier={3}  model={4}" -f (Format-Tokens $info.ctx), (Format-Tokens $ceiling), $pct, $tier, $info.model
+        $modelNote = if ([string]::IsNullOrWhiteSpace($info.model)) { 'model=unknown (no assistant message yet)' } else { "model=$($info.model)" }
+        "ctx {0} / {1} ({2}%)  tier={3}  {4}" -f (Format-Tokens $info.ctx), (Format-Tokens $ceiling), $pct, $tier, $modelNote
     }
 } catch {
     if (-not $Json) { "ctx unknown" }
