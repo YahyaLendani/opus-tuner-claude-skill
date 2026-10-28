@@ -15,6 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The version is the one thing every doc repeats, so let the build check it
+      # instead of trusting a release checklist. VERSION is the source of truth.
+      - name: Version is consistent
+        shell: powershell
+        run: |
+          $v = (Get-Content skills/opus-tuner/VERSION -Raw).Trim()
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "VERSION is not semver: '$v'" }
+          $readme = Get-Content README.md -Raw
+          if ($readme -notmatch "(?m)^> \*\*Status:\*\* $([regex]::Escape($v))\.") {
+            throw "README status line does not match VERSION $v"
+          }
+          $changelog = Get-Content CHANGELOG.md -Raw
+          if ($changelog -notmatch "(?m)^## \[$([regex]::Escape($v))\]") {
+            throw "CHANGELOG has no '$v' entry"
+          }
+          Write-Host "version $v consistent across VERSION, README and CHANGELOG"
+
       - name: Every script parses
         shell: powershell
         run: |

@@ -57,7 +57,7 @@ pwsh -NoProfile -File skills/opus-tuner/scripts/selftest.ps1
 pwsh -NoProfile -File tests/install-test.ps1
 ```
 
-Both must pass with 0 failures (currently 57 and 53 assertions). The self-test is
+Both must pass with 0 failures (currently 57 and 55 assertions). The self-test is
 sandboxed through `OPUS_TUNER_STATE`; the installer test uses a throwaway
 `CLAUDE_CONFIG_DIR`. If you add a hook or a config key, add an assertion for it,
 and update the expected counts in `README.md` and `CHANGELOG.md` when they change.
@@ -103,6 +103,21 @@ file is executable, that the shebang survives checkout (`.gitattributes` pins
 `*.sh` to LF), and that `-NoHooks` writes skills and `CLAUDE.md` but no
 `settings.json`. If you change the installer's switches, update that step.
 
+## Releasing
+
+1. Bump `skills/opus-tuner/VERSION`, add the `CHANGELOG.md` entry, and update the
+   `> **Status:**` line in `README.md` to the same number.
+2. Push and wait for CI. The `Version is consistent` step fails if the three
+   disagree, so a forgotten bump cannot reach a tag.
+3. Tag and publish:
+   ```sh
+   git tag -a v0.4.0 -m "opus-tuner 0.4.0"
+   git push origin v0.4.0
+   gh release create v0.4.0 --title "opus-tuner 0.4.0" --generate-notes
+   ```
+4. The README version badge reads the latest release through shields.io, so there
+   is nothing to edit. A release is what makes the badge say a number.
+
 ## Style
 
 - 4 spaces, no tabs. Keep functions small and allocation-light: these run on
@@ -111,10 +126,11 @@ file is executable, that the shebang survives checkout (`.gitattributes` pins
   platform quirk, say so and give the number.
 - Do not add a knob without a default that preserves current behaviour.
 - Update `CHANGELOG.md` for user-visible changes.
-- The `version` badge at the top of `README.md` is a static shields.io badge. Bump
-  it in the same commit as the `CHANGELOG.md` entry, or it will advertise a version
-  that no longer exists. The other badges are live: CI, license, and the language
-  split come from GitHub, so they cannot drift.
+- `skills/opus-tuner/VERSION` is the single source of truth for the version. A
+  release bumps that file, adds the `CHANGELOG.md` entry, and updates the README
+  status line — CI compares all three and fails on a mismatch, so this is enforced
+  rather than remembered. The other badges are live: CI, release, license and the
+  language split come from GitHub and cannot drift.
 - **Never name a local `$json` in a script that has a `-Json` switch.** PowerShell
   variables are case-insensitive, so `$json` *is* `$Json`, and assigning a string
   to a `[switch]` throws a `SwitchParameter` conversion error. The same trap

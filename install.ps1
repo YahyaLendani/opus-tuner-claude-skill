@@ -37,6 +37,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Read before anything is copied: the banner is the only place a user sees which
+# build they are about to install, and it is the string SECURITY.md asks reporters
+# for.
+$Version = 'unknown'
+$versionFile = Join-Path (Join-Path $PSScriptRoot 'skills') (Join-Path 'opus-tuner' 'VERSION')
+if (Test-Path -LiteralPath $versionFile) {
+    $raw = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+    if ($raw) { $Version = $raw }
+}
+
 # Same platform layer as _common.ps1. The installer stays standalone on purpose:
 # it must work even when the scripts it is about to copy are half-present.
 $OnWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
@@ -134,7 +144,8 @@ function Write-JsonFile {
 }
 
 Write-Host ''
-Write-Host "opus-tuner install -> $claudeDir" -ForegroundColor Cyan
+Write-Host "opus-tuner $Version" -ForegroundColor Cyan
+Write-Host "install -> $claudeDir"
 if ($DryRun) { Write-Host 'dry run: nothing will be written' -ForegroundColor Yellow }
 elseif (-not (Test-Path -LiteralPath $claudeDir)) { New-Item -ItemType Directory -Force -Path $claudeDir | Out-Null }
 

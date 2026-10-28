@@ -1,7 +1,7 @@
 # opus-tuner/**claude-skills**
 
 [![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml?query=branch%3Amain)
-[![version](https://img.shields.io/badge/version-0.3.2-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.4.0-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/github/license/YahyaLendani/opus-tuner)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)](docs/platforms.md)
 [![code](https://img.shields.io/github/languages/top/YahyaLendani/opus-tuner)](https://github.com/YahyaLendani/opus-tuner/search?l=powershell)
@@ -17,7 +17,7 @@ re-read it for work that did not need it.
 Six hooks, seven skills, a handoff writer, four effort gears, and a measuring
 tool. No network calls, no API keys, no dependencies.
 
-> **Status:** 0.3.2. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.4.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -147,7 +147,7 @@ Hooks only exist in Claude Code. Two fallbacks:
 # (56 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
-# 53 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, against a sandbox
+# 55 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, against a sandbox
 powershell -NoProfile -File tests\install-test.ps1
 
 # is the install healthy? hooks registered, scripts present, config valid
@@ -289,6 +289,7 @@ uninstaller rather than deleting folders by hand.
 | [docs/measuring.md](docs/measuring.md) | How `audit.ps1` counts, how to capture a baseline |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Hooks not firing, `pwsh` missing, VS Code quirks, quota questions |
 | [docs/decisions.md](docs/decisions.md) | Why the design is shaped this way |
+| [SECURITY.md](SECURITY.md) | Trust boundary, what the scripts read and write, how to report a vulnerability |
 | [skills/opus-tuner/README.md](skills/opus-tuner/README.md) | Technical reference for the installed skill |
 | [skills/claude-skill/SKILL.md](skills/claude-skill/SKILL.md) | Portable, hook-free version for Desktop and claude.ai |
 

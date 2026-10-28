@@ -39,6 +39,16 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
 
+# The version lives next to the skill, so the installed copy can answer "which
+# build is this?" without the repo. SECURITY.md asks reporters for it, and until
+# this file existed there was nothing to ask.
+$script:TunerVersion = 'unknown'
+$versionFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'VERSION'
+if (Test-Path -LiteralPath $versionFile) {
+    $raw = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+    if ($raw) { $script:TunerVersion = $raw }
+}
+
 if ($Root) {
     $script:TunerRoot = $Root
     $script:TunerState = Join-Path (Join-Path $Root 'state') 'tuner'
@@ -335,9 +345,11 @@ if ($advisory) {
 $skipped = @($checks | Where-Object { $_.PSObject.Properties['skipped'] -and $_.skipped }).Count
 
 if ($Json) {
-    Write-HookJson @{ ok = ($fail -eq 0); failed = $fail; advisory = $advisory; skipped = $skipped; checks = @($checks) }
+    Write-HookJson @{ ok = ($fail -eq 0); failed = $fail; version = $script:TunerVersion; advisory = $advisory; skipped = $skipped; checks = @($checks) }
     if ($fail -eq 0) { exit 0 } else { exit 1 }
 }
+
+Write-Host "opus-tuner $script:TunerVersion" -ForegroundColor Cyan
 
 $section = ''
 foreach ($c in $checks) {

@@ -95,6 +95,7 @@ for the others on the same machine.
 | Skills | `…\.claude\skills\<name>` | `~/.claude/skills/<name>` |
 | Settings | `…\.claude\settings.json` | `~/.claude/settings.json` |
 | State | `…\.claude\state\tuner\` | `~/.claude/state/tuner/` |
+| Version | `…\.claude\skills\opus-tuner\VERSION` | `~/.claude/skills/opus-tuner/VERSION` |
 | Handoff brief | `<project>\.claude\handoff.md` | `<project>/.claude/handoff.md` |
 
 The handoff brief is the one path that follows the **project**, not the config
@@ -126,6 +127,21 @@ write `settings.json` at all. Consequences, stated plainly:
 
 If a previous install left hooks behind, `-NoHooks` warns you and points at
 `uninstall.ps1 -KeepSkills`, which removes the hooks while keeping the skills.
+
+## Removing it (macOS and Linux)
+
+There is no `uninstall.sh`. The uninstaller is a PowerShell script like
+everything else, so it needs `pwsh` — the same prerequisite as installing:
+
+```sh
+pwsh -NoProfile -File uninstall.ps1
+pwsh -NoProfile -File uninstall.ps1 -KeepSkills   # drop the hooks, keep the skills
+pwsh -NoProfile -File uninstall.ps1 -Purge        # also delete config and state
+```
+
+Deleting `~/.claude/skills/opus-tuner` by hand is not enough: the hook entries in
+`settings.json` survive and then fire against missing scripts. Run the
+uninstaller.
 
 ## Plain Claude (Desktop / claude.ai)
 

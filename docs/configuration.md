@@ -174,7 +174,8 @@ parses, that `routineTokens < deepTokens < autoCompactWindow`, that all seven
 skills are installed with matching `name:` frontmatter, that every script parses,
 that the state directory is writable, and — on POSIX — that `pwsh` is on `PATH`.
 Exit code 0 means healthy; `-Json` gives the same result as machine-readable
-output. `-Root <dir>` checks a different config dir.
+output, including `version`, `advisory` and `skipped`. `-Root <dir>` checks a
+different config dir.
 
 Add `-Replay` to execute each registered command exactly as written, in a
 throwaway config dir: six events, exit 0, and empty-or-valid-JSON output. It adds

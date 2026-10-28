@@ -65,6 +65,11 @@ the test suites stay away from a live install.
 | `statusline.ps1` | status line | live `ctx/ceiling`, tier, effort, 5h and 7d windows |
 | `selftest.ps1` | manual / CI | 57 assertions against a synthetic transcript |
 
+`VERSION` sits beside this README and is installed with it. `doctor.ps1` prints
+that number above its sections and reports it as `version` in `-Json`; the
+installer and uninstaller print it in their banner. It is the string to include in
+a bug report.
+
 ## Hard wrap
 
 At the ceiling, `stop.ps1` returns `decision: "block"` with a reason that tells

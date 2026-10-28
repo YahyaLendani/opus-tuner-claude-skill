@@ -22,6 +22,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Same source of truth as the installer. The skills may already be gone by the
+# time this runs, so a missing VERSION is not an error.
+$Version = 'unknown'
+$versionFile = Join-Path (Join-Path $PSScriptRoot 'skills') (Join-Path 'opus-tuner' 'VERSION')
+if (Test-Path -LiteralPath $versionFile) {
+    $raw = (Get-Content -LiteralPath $versionFile -Raw).Trim()
+    if ($raw) { $Version = $raw }
+}
+
 $OnWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE }
            elseif ($env:HOME) { $env:HOME }
@@ -56,7 +65,8 @@ function ConvertTo-Hashtable {
 }
 
 Write-Host ''
-Write-Host "opus-tuner uninstall <- $claudeDir" -ForegroundColor Cyan
+Write-Host "opus-tuner $Version" -ForegroundColor Cyan
+Write-Host "uninstall <- $claudeDir"
 if ($DryRun) { Write-Host 'dry run: nothing will be removed' -ForegroundColor Yellow }
 
 $changed = $false

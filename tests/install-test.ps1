@@ -143,6 +143,14 @@ try {
     & $Interpreter @ExePrefix -File $doctor | Out-Null
     Check 'doctor reports a healthy install' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
 
+    # The version has to survive the copy: SECURITY.md asks reporters for it, and
+    # a bug report without it is a round trip.
+    $installedVersion = Join-Path (Join-Path (Join-Path $sandbox 'skills') 'opus-tuner') 'VERSION'
+    Check 'VERSION file installed with the skill' (Test-Path -LiteralPath $installedVersion)
+    $expectedVersion = (Get-Content -LiteralPath (Join-Path (Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'skills') 'opus-tuner') 'VERSION') -Raw).Trim()
+    $versionOut = (& $Interpreter @ExePrefix -File $doctor 2>&1) -join "`n"
+    Check 'doctor reports the installed version' ($versionOut -match [regex]::Escape("opus-tuner $expectedVersion")) $versionOut
+
     # -Replay executes the command strings from settings.json, which is the only
     # check that catches a quoting error or a shell that cannot start the
     # interpreter. Registration plus a script that parses does not prove either.

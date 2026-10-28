@@ -3,6 +3,35 @@
 All notable changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-28
+
+The version is now something the code knows, not a number kept in prose.
+
+### Added
+
+- `skills/opus-tuner/VERSION` — the single source of truth, installed with the
+  skill so an installed copy can answer "which build is this?" without the repo.
+- `doctor.ps1` prints `opus-tuner <version>` above its sections and reports it as
+  `version` in `-Json`. `install.ps1` and `uninstall.ps1` print it in their
+  banner. `SECURITY.md` asks reporters for the version; until now nothing could
+  produce one.
+- A CI step fails the build when `VERSION`, the README status line and the top
+  `CHANGELOG.md` heading disagree. The version cannot drift silently.
+- `v0.4.0` tag and GitHub Release, so installs can be pinned instead of tracking
+  `main`. The README version badge now reads the latest release.
+- `docs/platforms.md` documents uninstalling on macOS and Linux, where there is no
+  `uninstall.sh` and `pwsh` is required.
+- `docs/troubleshooting.md` answers "which version is installed?".
+
+### Changed
+
+- `SECURITY.md` is linked from the README documentation table.
+
+### Notes
+
+- Self-test: 57 assertions. Installer test: 55 assertions (was 53), now covering
+  the installed `VERSION` file and the doctor's version output.
+
 ## [0.3.2] - 2026-10-28
 
 The doctor stops crying wolf on a skills-only install.
