@@ -1,4 +1,4 @@
-# opus-tuner/**claude-skills**
+# opus-tuner/claude-skills
 
 [![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml?query=branch%3Amain)
 [![version](https://img.shields.io/github/v/release/YahyaLendani/opus-tuner?label=version&style=flat)](https://github.com/YahyaLendani/opus-tuner/releases)
@@ -17,7 +17,7 @@ re-read it for work that did not need it.
 Six hooks, seven skills, a handoff writer, four effort gears, and a measuring
 tool. No network calls, no API keys, no dependencies.
 
-> **Status:** 0.4.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.4.1. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -147,8 +147,14 @@ Hooks only exist in Claude Code. Two fallbacks:
 # (56 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
-# 55 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, against a sandbox
+# 56 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, future model, against a sandbox
 powershell -NoProfile -File tests\install-test.ps1
+
+# every relative Markdown link points at a file that exists (no network)
+powershell -NoProfile -File tests\link-check.ps1
+
+# every badge in this README renders (network; CI reports it without blocking)
+powershell -NoProfile -File tests\badge-check.ps1
 
 # is the install healthy? hooks registered, scripts present, config valid
 powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1

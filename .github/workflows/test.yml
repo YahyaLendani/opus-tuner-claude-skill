@@ -8,10 +8,17 @@ on:
 permissions:
   contents: read
 
+# A push that supersedes another should cancel it: these runs are cheap but
+# nobody reads the intermediate ones.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows-powershell-51:
     name: Windows PowerShell 5.1
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -31,6 +38,11 @@ jobs:
             throw "CHANGELOG has no '$v' entry"
           }
           Write-Host "version $v consistent across VERSION, README and CHANGELOG"
+
+      # Deterministic and local: no network, so it can gate a pull request.
+      - name: Markdown links resolve
+        shell: powershell
+        run: ./tests/link-check.ps1
 
       - name: Every script parses
         shell: powershell
@@ -55,9 +67,17 @@ jobs:
         shell: powershell
         run: ./tests/install-test.ps1
 
+      # Network, so it reports without blocking: a shields.io outage must not
+      # fail a pull request, but a badge stuck on "no releases" should be seen.
+      - name: Badges render
+        shell: powershell
+        continue-on-error: true
+        run: ./tests/badge-check.ps1
+
   windows-pwsh-7:
     name: Windows pwsh 7 (non-blocking)
     runs-on: windows-latest
+    timeout-minutes: 15
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
@@ -77,6 +97,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -98,6 +119,10 @@ jobs:
             }
           }
           if ($bad -gt 0) { exit 1 }
+
+      - name: Markdown links resolve
+        shell: pwsh
+        run: ./tests/link-check.ps1
 
       - name: Self-test
         shell: pwsh

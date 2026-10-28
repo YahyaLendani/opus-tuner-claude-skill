@@ -3,6 +3,35 @@
 All notable changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-10-28
+
+The doctor stops trusting one model name.
+
+### Fixed
+
+- `doctor.ps1` validated `modelSettings` only when the key was literally
+  `claude-opus-5-5`. On any other model name the check disappeared, so an invalid
+  `effortLevel` sat in `settings.json` while the doctor reported healthy — the
+  exact failure the check exists to prevent. It now validates every entry under
+  `modelSettings` and names the offender: `invalid: claude-opus-6=extreme`.
+- The README H1 rendered literal `**` around `claude-skills`.
+
+### Added
+
+- `tests/link-check.ps1` fails when a relative Markdown link points at a file
+  that does not exist. Fenced code blocks and anchors are skipped. It is
+  deterministic, so CI runs it blocking on Windows and POSIX.
+- `tests/badge-check.ps1` fetches every badge in the README and fails when one
+  renders "no releases", "not found" or similar. CI runs it with
+  `continue-on-error`, because a shields.io outage must not fail a pull request.
+- CI cancels superseded runs (`concurrency`) and each job has a 15-minute
+  timeout, so a hung interpreter cannot burn the default six hours.
+
+### Notes
+
+- Self-test: 57 assertions. Installer test: 56 assertions (was 55), now covering
+  a model name the bundle has never heard of.
+
 ## [0.4.0] - 2026-10-28
 
 The version is now something the code knows, not a number kept in prose.

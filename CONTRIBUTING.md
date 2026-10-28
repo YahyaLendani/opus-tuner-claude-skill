@@ -57,7 +57,7 @@ pwsh -NoProfile -File skills/opus-tuner/scripts/selftest.ps1
 pwsh -NoProfile -File tests/install-test.ps1
 ```
 
-Both must pass with 0 failures (currently 57 and 55 assertions). The self-test is
+Both must pass with 0 failures (currently 57 and 56 assertions). The self-test is
 sandboxed through `OPUS_TUNER_STATE`; the installer test uses a throwaway
 `CLAUDE_CONFIG_DIR`. If you add a hook or a config key, add an assertion for it,
 and update the expected counts in `README.md` and `CHANGELOG.md` when they change.
@@ -103,17 +103,22 @@ file is executable, that the shebang survives checkout (`.gitattributes` pins
 `*.sh` to LF), and that `-NoHooks` writes skills and `CLAUDE.md` but no
 `settings.json`. If you change the installer's switches, update that step.
 
+`tests/link-check.ps1` runs blocking on both Windows and POSIX: it is local and
+deterministic. `tests/badge-check.ps1` runs on Windows with `continue-on-error`,
+because it fetches shields.io and a third-party outage must not fail a pull
+request. Run both before touching the README.
+
 ## Releasing
 
 1. Bump `skills/opus-tuner/VERSION`, add the `CHANGELOG.md` entry, and update the
    `> **Status:**` line in `README.md` to the same number.
 2. Push and wait for CI. The `Version is consistent` step fails if the three
    disagree, so a forgotten bump cannot reach a tag.
-3. Tag and publish:
+3. Tag and publish, replacing `vX.Y.Z` with the version in `VERSION`:
    ```sh
-   git tag -a v0.4.0 -m "opus-tuner 0.4.0"
-   git push origin v0.4.0
-   gh release create v0.4.0 --title "opus-tuner 0.4.0" --generate-notes
+   git tag -a vX.Y.Z -m "opus-tuner X.Y.Z"
+   git push origin vX.Y.Z
+   gh release create vX.Y.Z --title "opus-tuner X.Y.Z" --generate-notes
    ```
 4. The README version badge reads the latest release through shields.io, so there
    is nothing to edit. A release is what makes the badge say a number.
