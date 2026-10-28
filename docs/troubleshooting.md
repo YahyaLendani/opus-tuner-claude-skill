@@ -68,7 +68,7 @@ still fails. That is a real break: re-run `install.ps1 -Force`.
 powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\doctor.ps1" -Json
 ```
 
-The first field is `version`. Or read the file it comes from:
+The `version` field is what you want. Or read the file it comes from:
 `~/.claude/skills/opus-tuner/VERSION`. `install.ps1` and `uninstall.ps1` print the
 same number in their banner. Bug reports and security advisories need it, and
 `git log` is not available to someone who installed from a release archive.
