@@ -1,4 +1,4 @@
-# opus-tuner
+# opus-tuner/**claude-skills**
 
 [![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml)
 
