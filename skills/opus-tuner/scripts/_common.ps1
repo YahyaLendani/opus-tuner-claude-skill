@@ -56,9 +56,16 @@ function Get-TunerConfig {
         hardWrap              = $true
         logDecisions          = $true
         downshift             = $true
+        bigOutputTokens       = 6000
+        bigOutputWarnings     = 3
+        weeklyDigest          = $true
         profile               = 'dev'
         profileNote           = ''
-        deepPatterns          = 'refactor|architect|root cause|race condition|deadlock|migrat|redesign|why does|why is|why did|flaky|intermittent|investigate|prove|optimi[sz]|memory leak|performance|concurren|thread-safe|vulnerab|rewrite|overhaul|regression'
+        deepPatterns          = 'refactor|architect|root cause|race condition|deadlock|migrat|redesign|flaky|intermittent|memory leak|concurren|thread-safe|vulnerab|rewrite|overhaul|regression'
+        # Words that also turn up in ordinary questions. On their own they do
+        # not escalate: the deep tier is escalate-only, so a false positive
+        # carries the 250k ceiling for the rest of the session.
+        weakDeepPatterns      = 'why does|why is|why did|investigate|prove|optimi[sz]|performance'
         mechanicalPatterns    = 'rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license'
         bulkPatterns          = '\ball\b|every|across|each file|multiple files|whole repo|whole project|codebase|batch|bulk|throughout'
     }
@@ -105,6 +112,7 @@ function Get-TunerProfiles {
             downshift          = $false
             maxTurnsPerSession = 0
             deepPatterns       = 'rewrite|restructure|overhaul|outline|story arc|plot|worldbuild|chapter|manuscript|long-form|screenplay|style guide|series'
+            weakDeepPatterns   = ''
             profileNote        = '[tuner] profile=creative: this session is writing or ideation, not code. Drafts, options and full prose are the work: write at the length the piece needs, offer distinct alternatives when exploring, and keep the user''s voice unless asked to change it. Tool rules (batch calls, grep before read) still apply when you use tools. Do not restate the brief or paste back unchanged text; quote only what changed.'
         }
     }
@@ -161,6 +169,7 @@ function New-State {
         files   = @()
         fails   = 0
         maxUses = 0
+        bigWarned = 0
         nudged  = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false; routeCeiling = $false }
         updated = ''
     }
@@ -379,3 +388,37 @@ function Write-Decision {
     } catch { }
 }
 
+
+# One line about the last 7 days of decisions, at most once per 7 days. Reads
+# only the decision log (no transcripts), so it stays cheap at session start.
+# Returns '' when it is not due, logging is off, or nothing happened.
+function Get-WeeklyDigest {
+    param($Config, [double]$CacheReadPerM = 1.50)
+    try {
+        if ($Config -and $Config.ContainsKey('logDecisions') -and -not [bool]$Config['logDecisions']) { return '' }
+        if ($Config -and $Config.ContainsKey('weeklyDigest') -and -not [bool]$Config['weeklyDigest']) { return '' }
+        $log = Join-Path $script:TunerState 'decisions.csv'
+        $stampPath = Join-Path $script:TunerState 'digest.stamp'
+        if (-not (Test-Path -LiteralPath $log)) { return '' }
+        if ((Test-Path -LiteralPath $stampPath) -and ((Get-Date) - (Get-Item -LiteralPath $stampPath).LastWriteTime).TotalDays -lt 7) { return '' }
+
+        $since = (Get-Date).AddDays(-7)
+        $rows = @(Import-Csv -LiteralPath $log | Where-Object {
+            $t = [datetime]::MinValue
+            [datetime]::TryParse([string]$_.time, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$t) -and $t -ge $since
+        })
+        [System.IO.File]::WriteAllText($stampPath, (Get-Date).ToString('o'), (New-Object System.Text.UTF8Encoding($false)))
+        if ($rows.Count -eq 0) { return '' }
+
+        # A gear switch is any prompt the router sent away from the default
+        # gear: its own row ('gear-low'), or an escalation row that also chose one.
+        $gearRows = @($rows | Where-Object { ($_.action -like 'gear-*') -or ($_.action -like 'escalate-*' -and $_.gear -and $_.gear -ne 'high') })
+        $gearCost = 0.0
+        foreach ($g in $gearRows) { $gearCost += ([double]$g.ctx / 1e6) * $CacheReadPerM }
+        $escalations = @($rows | Where-Object { $_.action -like 'escalate-*' }).Count
+        $wraps = @($rows | Where-Object { $_.action -eq 'hard-wrap' }).Count
+        $compactions = @($rows | Where-Object { $_.action -eq 'compact-manual' -or $_.action -eq 'compact-auto' }).Count
+
+        return ("opus-tuner, last 7 days: {0} gear switch(es) costing ~`${1:0.00} in extra context re-reads, {2} deep escalation(s), {3} hard wrap(s), {4} compaction(s). Full report: weekly.ps1." -f $gearRows.Count, $gearCost, $escalations, $wraps, $compactions)
+    } catch { return '' }
+}

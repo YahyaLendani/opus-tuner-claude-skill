@@ -316,7 +316,10 @@ if (-not $script:OnWindows) {
 }
 
 # ---------- skills ----------
-foreach ($s in @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap', 'profile')) {
+# The installer puts the hook-free claude-skill in advisory installs and the
+# profile switch in hooked ones, so expect whichever matches the wiring found.
+$modeSkill = if ($hookCount -eq 0) { 'claude-skill' } else { 'profile' }
+foreach ($s in @('opus-tuner', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap', $modeSkill)) {
     $md = Join-Path (Join-Path $skillsDir $s) 'SKILL.md'
     $ok = Test-Path -LiteralPath $md
     $detail = if ($ok) { '' } else { "missing $md" }

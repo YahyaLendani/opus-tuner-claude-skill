@@ -85,8 +85,15 @@ try {
     # ---------- first install ----------
     Write-Host ''
     Write-Host 'first install (foreign status line)' -ForegroundColor Yellow
+    # 0.5.0 and earlier installed the hook-free claude-skill everywhere. A hooked
+    # install must move that leftover to the backups, since its description
+    # would otherwise cost context on every request for nothing.
+    $repoSkills = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills'
+    Copy-Item -LiteralPath (Join-Path $repoSkills 'claude-skill') -Destination (Join-Path (Join-Path $sandbox 'skills') 'claude-skill') -Recurse -Force
     & $install | Out-Null
     Check 'install exits 0' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
+    Check 'leftover claude-skill moved out of skills/' (-not (Test-Path (Join-Path (Join-Path $sandbox 'skills') 'claude-skill')))
+    Check 'leftover claude-skill kept in backups' (@(Get-ChildItem (Join-Path (Join-Path $sandbox 'state') 'opus-tuner-backups') -Directory -Filter 'claude-skill-*' -ErrorAction SilentlyContinue).Count -eq 1)
 
     $s = Read-Settings $sandbox
     foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionStart', 'PreCompact')) {
@@ -112,7 +119,7 @@ try {
     }
 
     $skills = @(Get-ChildItem (Join-Path $sandbox 'skills') -Directory)
-    Check 'eight skills installed' ($skills.Count -eq 8) "count $($skills.Count)"
+    Check 'seven skills installed, with profile and without claude-skill' ($skills.Count -eq 7 -and (@($skills.Name) -contains 'profile') -and (@($skills.Name) -notcontains 'claude-skill')) "$(@($skills.Name) -join ',')"
     $md = Get-Content (Join-Path $sandbox 'CLAUDE.md') -Raw
     Check 'CLAUDE.md keeps user content' ($md -match 'keep me')
     Check 'CLAUDE.md gains the block' ($md -match '<!-- opus-tuner:begin -->')
@@ -201,7 +208,7 @@ try {
     }
     Check "user's Stop hook survives uninstall" ((Count-User $s 'Stop' 'mine.ps1') -eq 1)
     Check 'our status line removed' (-not $s.statusLine)
-    Check 'all eight skill folders removed' (@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory -ErrorAction SilentlyContinue).Count -eq 0) "left: $(@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory).Name -join ',')"
+    Check 'all skill folders removed' (@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory -ErrorAction SilentlyContinue).Count -eq 0) "left: $(@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory).Name -join ',')"
     $md = Get-Content (Join-Path $sandbox 'CLAUDE.md') -Raw
     Check 'CLAUDE.md keeps user content after uninstall' ($md -match 'keep me')
     Check 'CLAUDE.md block removed' (-not ($md -match 'opus-tuner:begin'))
@@ -238,6 +245,8 @@ try {
     Check 'advisory mode exits 0' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
     Check 'advisory mode writes no settings.json' (-not (Test-Path (Join-Path $advisory 'settings.json')))
     Check 'advisory mode still installs skills' (Test-Path (Join-Path (Join-Path $advisory 'skills') 'opus-tuner'))
+    $advSkills = @(Get-ChildItem (Join-Path $advisory 'skills') -Directory).Name
+    Check 'advisory mode installs claude-skill, not profile' ((@($advSkills) -contains 'claude-skill') -and (@($advSkills) -notcontains 'profile')) ($advSkills -join ',')
     Check 'advisory mode still writes CLAUDE.md' ((Get-Content (Join-Path $advisory 'CLAUDE.md') -Raw) -match 'opus-tuner:begin')
 
     # A skills-only install is a legitimate configuration, not a broken one. The
