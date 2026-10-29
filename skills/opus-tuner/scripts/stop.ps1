@@ -36,6 +36,7 @@ try {
     $changed = $false
     $soft = [int64]([double]$cfg['nudgeAt'] * $ceiling)
     $grace = [int64]$cfg['graceTokens']
+    $graceEscalated = $false
 
     # Grace first, for the same reason as route.ps1: at routine ceiling + a
     # little, the session steps up rather than being stopped mid-task.

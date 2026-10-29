@@ -306,6 +306,8 @@ if ($settings -and $settings.autoCompactWindow) {
 }
 
 Add-Check 'mode is a known value' (@('advise', 'enforce', 'off') -contains [string]$cfg['mode']) ([string]$cfg['mode'])
+$profileDetail = if ($cfg.ContainsKey('profileInvalid')) { "unknown '$($cfg['profileInvalid'])', running dev" } else { [string]$cfg['profile'] }
+Add-Check 'profile is a known value' (-not $cfg.ContainsKey('profileInvalid')) $profileDetail
 
 # POSIX hooks name pwsh explicitly, so a missing pwsh is the most likely reason
 # nothing fires on macOS or Linux.
@@ -314,7 +316,7 @@ if (-not $script:OnWindows) {
 }
 
 # ---------- skills ----------
-foreach ($s in @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')) {
+foreach ($s in @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap', 'profile')) {
     $md = Join-Path (Join-Path $skillsDir $s) 'SKILL.md'
     $ok = Test-Path -LiteralPath $md
     $detail = if ($ok) { '' } else { "missing $md" }

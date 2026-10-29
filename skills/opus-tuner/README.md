@@ -17,6 +17,7 @@ reference for what is wired where and why. The scripts run on Windows PowerShell
 | Deep tactics | `skills/opus-tuner/references/playbook.md` | 0 until read |
 | Effort gears | `skills/gear-{low,medium,xhigh,max}` | ~100 tok/turn total (descriptions stay visible so a gear can be picked when the router is silent) |
 | Handoff writer | `skills/wrap` + `scripts/brief.ps1` | 0 until invoked |
+| Profile switch | `skills/profile` + `scripts/profile.ps1` | 0 (user-only skill); creative adds ~100 tok once per session |
 | Portable rules | `skills/claude-skill` | 0 until invoked; for clients without hooks |
 | Hooks | `~/.claude/settings.json` | 0 tokens |
 | Status line | `settings.json` → `statusline.ps1` | 0 tokens |
@@ -40,6 +41,9 @@ the defaults below.
 | `blockManualCompact` | true | PreCompact refuses the first manual `/compact` per session; auto is never blocked |
 | `logDecisions` | true | one row per decision in `state/tuner/decisions.csv` |
 | `deepPatterns` / `mechanicalPatterns` / `bulkPatterns` | regex | editable classification vocabulary |
+| `downshift` | true | `false` never picks `gear-low` |
+| `profile` | `dev` | `dev` or `creative`; applied after the keys above. See [configuration](../../docs/configuration.md#profiles) |
+| `profiles` | — | per-profile overrides |
 
 Two environment variables exist for tests and experiments:
 `OPUS_TUNER_CONFIG` and `OPUS_TUNER_STATE` override the config file and state
@@ -58,12 +62,13 @@ the test suites stay away from a live install.
 | `pre-compact.ps1` | PreCompact | logs every compaction; blocks the first manual `/compact` per session. Auto is never blocked |
 | `brief.ps1` | manual (`/wrap`) | writes `.claude/handoff.md` from transcript facts |
 | `ctx.ps1` | manual | current context vs ceiling |
+| `profile.ps1` | manual (`/profile`) | swap or set the dev / creative profile; `show` prints it and the note it adds |
 | `audit.ps1` | manual | per-session cache read/write, output, peak context, cost; `-Baseline x.csv` prints deltas |
 | `stats.ps1` | manual | what the tuner decided: actions, context at each, per day |
 | `weekly.ps1` | manual | audit + stats against the newest baseline, written to `state/tuner/weekly-<date>.txt` |
 | `doctor.ps1` | manual | install health check: hook wiring, config validity, skills, script parse, state writable. `-Replay` executes the registered commands too; `-SkillsOnly` (implied when no hooks are registered) reports an advisory install and exits 0 |
 | `statusline.ps1` | status line | live `ctx/ceiling`, tier, effort, 5h and 7d windows |
-| `selftest.ps1` | manual / CI | 57 assertions against a synthetic transcript |
+| `selftest.ps1` | manual / CI | 73 assertions against a synthetic transcript |
 
 `VERSION` sits beside this README and is installed with it. `doctor.ps1` prints
 that number above its sections and reports it as `version` in `-Json`; the
@@ -176,7 +181,7 @@ Two differences that matter:
   terminal needs a restart, the panel needs *Developer: Reload Window* (or a
   restart of the extension host), and the Desktop app needs a restart. Then check
   `/hooks` shows `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `Stop`,
-  `SessionStart`, `PreCompact` and `/skills` lists the seven skills.
+  `SessionStart`, `PreCompact` and `/skills` lists the eight skills.
 - **New conversations usually start as `startup`, not `clear`.** The panel's
   new-chat button does not always emit the `/clear` source, so
   `session-start.ps1` also re-seeds from `.claude/handoff.md` on `startup` when

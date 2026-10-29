@@ -112,7 +112,7 @@ try {
     }
 
     $skills = @(Get-ChildItem (Join-Path $sandbox 'skills') -Directory)
-    Check 'seven skills installed' ($skills.Count -eq 7) "count $($skills.Count)"
+    Check 'eight skills installed' ($skills.Count -eq 8) "count $($skills.Count)"
     $md = Get-Content (Join-Path $sandbox 'CLAUDE.md') -Raw
     Check 'CLAUDE.md keeps user content' ($md -match 'keep me')
     Check 'CLAUDE.md gains the block' ($md -match '<!-- opus-tuner:begin -->')
@@ -201,7 +201,7 @@ try {
     }
     Check "user's Stop hook survives uninstall" ((Count-User $s 'Stop' 'mine.ps1') -eq 1)
     Check 'our status line removed' (-not $s.statusLine)
-    Check 'all seven skill folders removed' (@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory -ErrorAction SilentlyContinue).Count -eq 0) "left: $(@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory).Name -join ',')"
+    Check 'all eight skill folders removed' (@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory -ErrorAction SilentlyContinue).Count -eq 0) "left: $(@(Get-ChildItem (Join-Path $sandbox 'skills') -Directory).Name -join ',')"
     $md = Get-Content (Join-Path $sandbox 'CLAUDE.md') -Raw
     Check 'CLAUDE.md keeps user content after uninstall' ($md -match 'keep me')
     Check 'CLAUDE.md block removed' (-not ($md -match 'opus-tuner:begin'))

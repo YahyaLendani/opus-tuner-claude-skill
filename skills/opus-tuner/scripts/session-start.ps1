@@ -22,8 +22,18 @@ try {
 
     # A resume keeps the tier it had: dropping a 300k deep session back to the
     # routine ceiling would instantly ask it to wrap. Everything else is a slate.
+    # A compaction is the same session with a smaller context: the tier and the
+    # counters reset, but the once-per-session limits (the manual /compact
+    # refusal and the gear-max ration) must not re-arm, or they stop being
+    # once per session.
     if (-not [string]::IsNullOrWhiteSpace($sid)) {
-        if ($source -ne 'resume' -and $source -ne 'fork') {
+        if ($source -eq 'compact') {
+            $old = Read-State $sid
+            $fresh = New-State
+            $fresh['maxUses'] = [int]$old['maxUses']
+            $fresh['nudged']['compact'] = [bool]$old['nudged']['compact']
+            Write-State $sid $fresh
+        } elseif ($source -ne 'resume' -and $source -ne 'fork') {
             Write-State $sid (New-State)
         }
     }
@@ -34,6 +44,9 @@ try {
     # open by design, so every knob would silently run on its default.
     $issue = Get-TunerConfigIssue
     if ($issue) { [void]$msgs.Add($issue) }
+    if ($cfg.ContainsKey('profileInvalid')) {
+        [void]$msgs.Add("tuner.config.json names an unknown profile '$($cfg['profileInvalid'])', so the dev profile is active. Known: dev, creative.")
+    }
 
     # Resuming pays before the first new token: the next request re-reads the
     # whole context. Reporting the estimate costs no model tokens.
@@ -79,10 +92,18 @@ try {
         }
     }
 
+    # The profile note is the one standing instruction a profile adds. A resumed
+    # or forked session already carries it, and compaction may have summarised
+    # it away, so it goes in on every source except those two.
+    $context = New-Object System.Collections.ArrayList
+    $note = [string]$cfg['profileNote']
+    if ($note -and $source -ne 'resume' -and $source -ne 'fork') { [void]$context.Add($note) }
+    if ($body) { [void]$context.Add($body) }
+
     $out = @{}
     if ($msgs.Count -gt 0) { $out['systemMessage'] = ($msgs -join ' ') }
-    if ($body) {
-        $out['hookSpecificOutput'] = @{ hookEventName = 'SessionStart'; additionalContext = $body }
+    if ($context.Count -gt 0) {
+        $out['hookSpecificOutput'] = @{ hookEventName = 'SessionStart'; additionalContext = ($context -join "`n`n") }
     }
     if ($out.Count -gt 0) { Write-HookJson $out }
 } catch { }

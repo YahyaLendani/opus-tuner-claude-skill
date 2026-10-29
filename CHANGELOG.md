@@ -3,6 +3,43 @@
 All notable changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-10-29
+
+Two profiles, and four fixes for behaviour that did not match the docs.
+
+### Added
+
+- `/profile` swaps between **dev** (the default, unchanged) and **creative**.
+  Creative turns off the `gear-low` downshift and `gear-max`, escalates the deep
+  tier on long-form vocabulary, and adds one note at session start. `/profile
+  show` prints the active settings and the exact note, so it can be checked
+  against your own system prompt. Stored as `"profile"` in `tuner.config.json`;
+  the switch edits that key only.
+- `downshift` and `profiles` config keys. A misspelt profile falls back to dev
+  and is reported at session start and by `doctor.ps1`.
+- The status line shows the profile when it is not dev.
+
+### Fixed
+
+- The `opus-tuner` skill told the model to delegate to `scout` and `hand`
+  subagents that the bundle never shipped. It now names the built-in `Explore`
+  agent and a general-purpose one.
+- When the prompt hook saw the ceiling before the Stop hook did, it set the
+  Stop hook's banner flag, so the user never saw the "/wrap then /clear"
+  banner. Each hook now has its own flag.
+- A compaction reset the session state, which re-armed the "once per session"
+  `/compact` refusal and refilled the `gear-max` ration. Both now survive it.
+- `mode: off` still let the tool hook write state files on every edit and
+  failure. It is now silent, as documented.
+- `uninstall.ps1` deleted any skill folder named `wrap`, including a user's own.
+  It now removes `wrap` and `profile` only when they are recognisably ours.
+
+### Notes
+
+- Self-test: 73 assertions (was 57). It now runs against an empty config of its
+  own, so a live install's profile or ceilings cannot change the result.
+  Installer test: 56 assertions, now expecting eight skills.
+
 ## [0.4.1] - 2026-10-28
 
 The doctor stops trusting one model name.

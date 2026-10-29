@@ -51,6 +51,9 @@ try {
     if ($effort) { [void]$parts.Add("$dim$effort$rst") }
     [void]$parts.Add("$color[$bar]$rst $(Format-Tokens $ctx)/$(Format-Tokens $ceiling) $pct%")
     [void]$parts.Add("$dim$tier$rst")
+    # Dev is the default and stays off the line; any other profile is shown, so
+    # a forgotten creative switch is visible in a code session.
+    if ([string]$cfg['profile'] -ne 'dev') { [void]$parts.Add("$yel$($cfg['profile'])$rst") }
 
     if ($in['rate_limits'] -is [System.Collections.IDictionary]) {
         $rl = $in['rate_limits']
