@@ -107,4 +107,4 @@ When a message begins with a handoff brief:
 - No automatic re-seed: the user pastes the brief.
 
 For measurement and enforcement, use opus-tuner in Claude Code:
-<https://github.com/YahyaLendani/opus-tuner>
+<https://github.com/YahyaLendani/opus-tuner-claude-skill>

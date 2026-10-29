@@ -3,6 +3,20 @@
 All notable changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-10-29
+
+Two fixes found while testing 0.6.0.
+
+### Fixed
+
+- `audit.ps1` used `$input` as a token counter. That is PowerShell's automatic
+  variable for piped input, so when the script started with stdin left open
+  (a backgrounded shell, some CI or editor runners) it hung until killed. The
+  counter is now `$inTok`; the report is unchanged.
+- Every link, badge, clone command and issue-template URL pointed at
+  `YahyaLendani/opus-tuner`. The repository is `opus-tuner-claude-skill`;
+  GitHub redirected, but a redirect breaks if the old name is ever reused.
+
 ## [0.6.0] - 2026-10-29
 
 Savings that need no setup: the tuner now trims its own waste and tells you
@@ -322,8 +336,8 @@ First public release.
   measured slower on the development machine; see the latency section.
 - Hooks fail open: any error exits 0 and lets Claude Code continue.
 
-[0.4.1]: https://github.com/YahyaLendani/opus-tuner/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/YahyaLendani/opus-tuner/releases/tag/v0.4.0
+[0.4.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/YahyaLendani/opus-tuner-claude-skill/releases/tag/v0.4.0
 
 <!-- Entries below 0.4.0 predate tagging, so their headings are plain text: a
      compare link to a tag that does not exist would be worse than none. -->
