@@ -125,6 +125,10 @@ request. Run both before touching the README.
    git push origin vX.Y.Z
    gh release create vX.Y.Z --title "opus-tuner X.Y.Z" --generate-notes
    ```
+   Or, without `gh` installed: open **Actions → release → Run workflow** on
+   `main`. It tags the commit, titles the release `opus-tuner X.Y.Z`, uses the
+   `CHANGELOG.md` entry as notes unless you paste your own, and adds the install
+   line. It refuses to overwrite a release that already exists.
 4. The README version badge reads the latest release through shields.io, so there
    is nothing to edit. A release is what makes the badge say a number.
 
