@@ -14,10 +14,10 @@ model and effort level you chose, but puts a ceiling on the two things that
 quietly dominate the bill: a context that grows without limit, and turns that
 re-read it for work that did not need it.
 
-Six hooks, eight skills, a handoff writer, four effort gears, two profiles, and
-a measuring tool. No network calls, no API keys, no dependencies.
+Six hooks, seven skills per install, a handoff writer, four effort gears, two
+profiles, and a measuring tool. No network calls, no API keys, no dependencies.
 
-> **Status:** 0.5.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.6.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -74,6 +74,7 @@ codes stripped. The bar turns yellow at 70% and red at 90%.
 | **Compaction is watched** | Every compaction is logged, and the first manual `/compact` in a session is refused once with a pointer to `/wrap` + `/clear`. Auto-compaction is never blocked. |
 | **Decision log** | One CSV row per decision (not per prompt), so “did the gears ever pay?” is answerable a week later. |
 | **Measurement** | `audit.ps1` reports per-session cache read/write, output, peak context, and cost. `stats.ps1` reports what the tuner decided. |
+| **Automatic savings** | Weak trigger words (`why is`, `performance`) only raise the ceiling alongside a second sign of hard work. One oversized tool result gets a single ~40-token note on how to bound the next one. The at-ceiling note is said once, not every prompt. Each install mode skips the skill it cannot use. A weekly one-line summary shows what the tuner did and what its gear switches cost, at zero tokens. |
 | **Profiles** | `/profile` swaps between **dev** (the default, adds nothing) and **creative** (no `gear-low` downshift, no `gear-max`, deep tier on long-form work, one ~100-token note). `/profile show` prints exactly what is in effect. Persists across sessions. |
 | **Portable mode** | No hooks at all: `-NoHooks` installs the rules into `CLAUDE.md` only. The `claude-skill` skill carries the same discipline into Desktop and claude.ai, where hooks do not exist. |
 
@@ -83,8 +84,8 @@ codes stripped. The bar turns yellow at 70% and red at 90%.
 |---|---|---|
 | `UserPromptSubmit` | `route.ps1` | Classifies the prompt, escalates the tier, picks a gear. |
 | `Stop` | `stop.ps1` | 70% warning, hard wrap at the ceiling, grace escalation. |
-| `PostToolUse` / `PostToolUseFailure` | `post-tool.ps1` | Counts consecutive failures and edited files (async; writes only on change). |
-| `SessionStart` | `session-start.ps1` | Resets the tier; re-seeds from the handoff brief; warns about a config typo and the cost of resuming a large session. |
+| `PostToolUse` / `PostToolUseFailure` | `post-tool.ps1` | Counts consecutive failures and edited files; flags one oversized tool result with a short note, at most three per session (async; writes only on change). |
+| `SessionStart` | `session-start.ps1` | Resets the tier; re-seeds from the handoff brief; warns about a config typo and the cost of resuming a large session; once a week, shows a one-line summary of what the tuner did. |
 | `PreCompact` | `pre-compact.ps1` | Logs every compaction; refuses the first manual `/compact` per session. Never blocks auto. |
 | `PreToolUse` *(optional)* | `pre-tool.ps1` | In `enforce` mode, refuses unbounded `Read`s at the ceiling. |
 
@@ -210,7 +211,10 @@ snap install powershell --classic
 
 ### The installer does
 
-- copy the eight skills into `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`);
+- copy seven skills into `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`): the
+  hook-free `claude-skill` only with `-NoHooks`, the `profile` switch only with
+  hooks, since every installed skill's description costs context on every
+  request. A leftover from the other mode, or from 0.5.0, is moved to the backups;
 - merge six hook events into `~/.claude/settings.json`, **keeping your existing
   hooks** and backing the file up first;
 - add a status line, unless you already have one;
@@ -244,11 +248,11 @@ Hooks only exist in Claude Code. Two fallbacks:
 
 ```powershell
 # Windows
-# 73 assertions: routing, hard wrap, compaction, handoff round trip, profiles, audit, timing
-# (72 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
+# 83 assertions: routing, hard wrap, compaction, handoff round trip, profiles, automatic savings, audit, timing
+# (82 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
-# 56 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, future model, against a sandbox
+# 59 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, future model, against a sandbox
 powershell -NoProfile -File tests\install-test.ps1
 
 # every relative Markdown link points at a file that exists (no network)
@@ -298,8 +302,9 @@ exist but you only want to validate the skills.
 
 In Claude Code, `/hooks` should list `UserPromptSubmit`, `PostToolUse`,
 `PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact`; `/skills` should list
-`opus-tuner`, `claude-skill`, `gear-low`, `gear-medium`, `gear-xhigh`, `gear-max`,
-`wrap`, `profile`. With `-NoHooks`, `/hooks` is empty and that is expected.
+`opus-tuner`, `gear-low`, `gear-medium`, `gear-xhigh`, `gear-max`, `wrap`,
+`profile`. With `-NoHooks`, `/hooks` is empty and that is expected, and `/skills`
+shows `claude-skill` instead of `profile`.
 
 ## Configure
 

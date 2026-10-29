@@ -24,7 +24,11 @@ If `CLAUDE_CONFIG_DIR` is set, the file is read from `$CLAUDE_CONFIG_DIR` instea
   "hardWrap": true,
   "blockManualCompact": true,
   "logDecisions": true,
-  "deepPatterns": "refactor|architect|root cause|race condition|deadlock|migrat|redesign|why does|why is|why did|flaky|intermittent|investigate|prove|optimi[sz]|memory leak|performance|concurren|thread-safe|vulnerab|rewrite|overhaul|regression",
+  "deepPatterns": "refactor|architect|root cause|race condition|deadlock|migrat|redesign|flaky|intermittent|memory leak|concurren|thread-safe|vulnerab|rewrite|overhaul|regression",
+  "weakDeepPatterns": "why does|why is|why did|investigate|prove|optimi[sz]|performance",
+  "bigOutputTokens": 6000,
+  "bigOutputWarnings": 3,
+  "weeklyDigest": true,
   "mechanicalPatterns": "rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license",
   "bulkPatterns": "\\ball\\b|every|across|each file|multiple files|whole repo|whole project|codebase|batch|bulk|throughout"
 }
@@ -154,11 +158,17 @@ reported at session start and by `doctor.ps1`.
 
 ## Classification vocabulary
 
-`deepPatterns`, `mechanicalPatterns` and `bulkPatterns` are .NET regular
-expressions, matched case-insensitively against the prompt.
+`deepPatterns`, `weakDeepPatterns`, `mechanicalPatterns` and `bulkPatterns` are
+.NET regular expressions, matched case-insensitively against the prompt. An
+empty string means "no words", not "match everything".
 
 - `deepPatterns` escalates the tier and picks `gear-xhigh` (or `gear-max` after
   two consecutive failures).
+- `weakDeepPatterns` are words that also turn up in ordinary questions ("why
+  is", "performance"). They count as deep only alongside a second signal: a
+  failure already in this session, 3+ files edited, plan mode, or a prompt of
+  400+ characters. The deep tier never drops back, so an everyday question that
+  escalates would carry the 250k ceiling for the rest of the session.
 - `mechanicalPatterns` can downshift to `gear-low`, subject to the context rules
   above.
 - `bulkPatterns` marks breadth ("all", "every", "codebase").
@@ -167,6 +177,24 @@ Add vocabulary for your own domain — "terraform", "schema migration", "flaky
 e2e" — rather than editing the scripts. Keep the lists short: every alternative
 is matched on every prompt, and a false positive costs a tier for the rest of the
 session.
+
+## Automatic savings
+
+| Key | Default | Effect |
+|---|---|---|
+| `bigOutputTokens` | 6000 | a single tool result at least this large (estimated at 4 characters per token) gets a one-line note on how to bound the next one; `0` turns it off |
+| `bigOutputWarnings` | 3 | most notes per session, so a session that needs big outputs is not nagged |
+| `weeklyDigest` | `true` | once every 7 days, the first fresh session start shows one line: gear switches and their re-read cost, escalations, hard wraps, compactions |
+
+The output note covers `Bash`, `PowerShell`, `Read`, `Grep`, `Glob`, `WebFetch`
+and MCP tools. Edit results are skipped: they echo the original file, which the
+model never sees. The hook runs async, so Claude Code passes the note to the
+model on its next request; nothing waits for it.
+
+The weekly line is a `systemMessage`: you see it, the model does not, so it
+costs no tokens. It reads only the decision log. Gear-switch cost is the logged
+context size times the Opus cache-read rate, because each switch re-reads the
+context once; `weekly.ps1` has the full report.
 
 ## Decision log
 
@@ -201,7 +229,7 @@ pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/doctor.ps1"
 ```
 
 Checks that the hooks are registered and their scripts exist, that the config
-parses, that `routineTokens < deepTokens < autoCompactWindow`, that all eight
+parses, that `routineTokens < deepTokens < autoCompactWindow`, that the seven skills for its mode
 skills are installed with matching `name:` frontmatter, that every script parses,
 that the state directory is writable, and — on POSIX — that `pwsh` is on `PATH`.
 Exit code 0 means healthy; `-Json` gives the same result as machine-readable

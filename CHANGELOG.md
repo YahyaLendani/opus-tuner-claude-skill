@@ -3,6 +3,47 @@
 All notable changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-10-29
+
+Savings that need no setup: the tuner now trims its own waste and tells you
+what it cost.
+
+### Changed
+
+- Weak trigger words (`why is`, `why does`, `investigate`, `prove`,
+  `optimise`, `performance`) moved to a new `weakDeepPatterns` list. They raise
+  the session to the 250k deep tier only alongside a second signal: a failure
+  already, 3+ files edited, plan mode, or a 400+ character prompt. Before, any
+  everyday "why is this slow" question escalated, and the deep tier never
+  drops back. Strong words (`race condition`, `refactor`, ...) still escalate
+  on their own.
+- The at-ceiling note from the prompt hook is said once per crossing instead
+  of on every prompt, where it re-added ~70 tokens to the most expensive
+  context of the session.
+- Each install mode installs only the skills it can use: hooked installs skip
+  the hook-free `claude-skill` (its description cost context on every
+  request), and `-NoHooks` installs skip `profile` (it only changes what hooks
+  do). Upgrading moves the other mode's skill to the backups when it is ours.
+  `doctor.ps1` expects the set that matches the wiring it finds.
+
+### Added
+
+- One oversized tool result (6k+ tokens by default) gets a single ~40-token
+  note on how to bound the next one, at most three per session. The
+  `PostToolUse` matcher now also covers `Read`, `Grep`, `Glob`, `WebFetch` and
+  MCP tools; the hook stays async. Knobs: `bigOutputTokens`,
+  `bigOutputWarnings`.
+- A weekly digest: once every 7 days the first fresh session start shows one
+  line with the week's gear switches and their re-read cost, escalations, hard
+  wraps and compactions. It is a `systemMessage`, so it costs no model tokens.
+  Knob: `weeklyDigest`.
+
+### Notes
+
+- Self-test: 83 assertions (was 73); the new routing, ceiling, output-note and
+  digest tests were confirmed to fail against the 0.5.0 hooks. Installer test:
+  59 assertions (was 56).
+
 ## [0.5.0] - 2026-10-29
 
 Two profiles, and four fixes for behaviour that did not match the docs.
