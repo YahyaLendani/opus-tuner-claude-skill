@@ -41,6 +41,7 @@ try {
 
     if ($evt -eq 'PostToolUseFailure') {
         $state['fails'] = [Math]::Min(9, [int]$state['fails'] + 1)
+        if ([string]$state['gear'] -eq 'low') { $state['lowFailed'] = $true }
         $dirty = $true
     } else {
         # 'PowerShell' is the shell tool on Windows; without it a successful

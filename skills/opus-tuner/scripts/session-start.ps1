@@ -58,6 +58,13 @@ try {
         if ($digest) { [void]$msgs.Add($digest) }
     }
 
+    # Automatic tuning, safe direction only: switch the low gear off when the
+    # log shows it keeps causing failures. Checked on fresh starts and /clear.
+    if ($source -eq 'startup' -or $source -eq 'clear') {
+        $tuned = Update-AutoTune $cfg
+        if ($tuned) { [void]$msgs.Add($tuned) }
+    }
+
     # Resuming pays before the first new token: the next request re-reads the
     # whole context. Reporting the estimate costs no model tokens.
     if ($source -eq 'resume' -or $source -eq 'fork') {

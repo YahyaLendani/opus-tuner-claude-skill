@@ -551,6 +551,32 @@ $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'weekly digest does not repeat within the week' ($r.text -notmatch 'last 7 days') $r.text
 
+# Automatic tuning: a low-gear turn that hits a failure is logged as such...
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename all the variables in the codebase')
+Invoke-Hook 'post-tool.ps1' (@{ session_id = $sid; cwd = $sandbox; hook_event_name = 'PostToolUseFailure'; tool_name = 'Bash'; tool_input = @{ command = 'x' }; error = 'Exit code 1' } | ConvertTo-Json -Compress) | Out-Null
+Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'carry on') | Out-Null
+$lowRows = @(Import-Csv -LiteralPath (Join-Path $env:OPUS_TUNER_STATE 'decisions.csv') | Where-Object { $_.session -eq $sid.Substring(0, 8) -and $_.action -like 'low-*' })
+Check 'a failed low-gear turn is logged as low-failed' ($r.text -match 'gear=low' -and $lowRows.Count -eq 1 -and $lowRows[0].action -eq 'low-failed' -and (Read-State $sid)['gear'] -eq 'high') (@($lowRows.action) -join ',')
+
+# ...and when that keeps happening, session start switches the low gear off.
+$now = (Get-Date).ToString('o')
+$rowsText = (1..5 | ForEach-Object { "$now,auto000$_,120000,routine,low,low-failed" }) -join "`r`n"
+[System.IO.File]::AppendAllText((Join-Path $env:OPUS_TUNER_STATE 'decisions.csv'), $rowsText + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'repeated low-gear failures switch the gear off, at zero tokens' ($r.text -match 'switched the low-effort gear off' -and $r.text -match 'systemMessage' -and $r.text -notmatch 'additionalContext') $r.text
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename all the variables in the codebase')
+Check 'while switched off, the router keeps the default gear' ($r.text -notmatch 'gear=low') $r.text
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'the switch-off is announced once' ($r.text -notmatch 'switched the low-effort gear off') $r.text
+Remove-Item -LiteralPath (Join-Path $env:OPUS_TUNER_STATE 'autotune.json') -Force
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename all the variables in the codebase')
+Check 'without the override, the low gear is back' ($r.text -match 'gear=low') $r.text
+
 # ---------- 7. status line ----------
 Write-Host ''
 Write-Host 'status line' -ForegroundColor Yellow

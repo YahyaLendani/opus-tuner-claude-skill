@@ -59,6 +59,7 @@ function Get-TunerConfig {
         bigOutputTokens       = 6000
         bigOutputWarnings     = 3
         weeklyDigest          = $true
+        autoTune              = $true
         profile               = 'dev'
         profileNote           = ''
         deepPatterns          = 'refactor|architect|root cause|race condition|deadlock|migrat|redesign|flaky|intermittent|memory leak|concurren|thread-safe|vulnerab|rewrite|overhaul|regression'
@@ -94,7 +95,30 @@ function Get-TunerConfig {
     if ($custom -is [System.Collections.IDictionary] -and $custom[$name] -is [System.Collections.IDictionary]) {
         foreach ($k in $custom[$name].Keys) { $cfg[$k] = $custom[$name][$k] }
     }
+
+    # An automatic switch-off from Update-AutoTune, applied last and only while
+    # it lasts. It only ever turns the low gear off, never a ceiling down.
+    if (-not $Defaults -and [bool]$cfg['autoTune']) {
+        $auto = Read-AutoTune
+        if ($auto) { $cfg['downshift'] = $false; $cfg['autoDownshiftOffUntil'] = $auto['until'] }
+    }
     return $cfg
+}
+
+function Get-AutoTunePath { return (Join-Path $script:TunerState 'autotune.json') }
+
+# The active automatic override, or $null when there is none or it expired.
+function Read-AutoTune {
+    $p = Get-AutoTunePath
+    if (-not (Test-Path -LiteralPath $p)) { return $null }
+    try {
+        $a = ConvertTo-Hashtable (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json)
+        $until = [datetime]::MinValue
+        if ($a -is [System.Collections.IDictionary] -and [bool]$a['downshiftOff'] -and
+            [datetime]::TryParse([string]$a['until'], [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$until) -and
+            $until -gt (Get-Date)) { return $a }
+    } catch { }
+    return $null
 }
 
 # Two named profiles. Dev is the defaults above, unchanged. Creative is for
@@ -170,6 +194,7 @@ function New-State {
         fails   = 0
         maxUses = 0
         bigWarned = 0
+        lowFailed = $false
         nudged  = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false; routeCeiling = $false }
         updated = ''
     }
@@ -420,5 +445,35 @@ function Get-WeeklyDigest {
         $compactions = @($rows | Where-Object { $_.action -eq 'compact-manual' -or $_.action -eq 'compact-auto' }).Count
 
         return ("opus-tuner, last 7 days: {0} gear switch(es) costing ~`${1:0.00} in extra context re-reads, {2} deep escalation(s), {3} hard wrap(s), {4} compaction(s). Full report: weekly.ps1." -f $gearRows.Count, $gearCost, $escalations, $wraps, $compactions)
+    } catch { return '' }
+}
+
+# Switch the low gear off for 14 days when it keeps misfiring. Each low-gear
+# turn logs 'low-ok' or 'low-failed' (a tool failure during it). With at least
+# 5 such turns in the last 14 days and 40% or more failed, low effort is causing
+# rework, which costs more than the gear saves, so the router stops choosing it.
+# Only ever this direction: falling back to the default gear keeps the model at
+# full strength. Runs at session start; returns a message for the user, or ''.
+function Update-AutoTune {
+    param($Config, [int]$Days = 14, [int]$MinTurns = 5, [double]$FailShare = 0.4)
+    try {
+        if (-not [bool]$Config['autoTune']) { return '' }
+        if (Read-AutoTune) { return '' }
+        $log = Join-Path $script:TunerState 'decisions.csv'
+        if (-not (Test-Path -LiteralPath $log)) { return '' }
+        $since = (Get-Date).AddDays(-$Days)
+        $rows = @(Import-Csv -LiteralPath $log | Where-Object {
+            ($_.action -eq 'low-ok' -or $_.action -eq 'low-failed') -and $(
+                $t = [datetime]::MinValue
+                [datetime]::TryParse([string]$_.time, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$t) -and $t -ge $since)
+        })
+        if ($rows.Count -lt $MinTurns) { return '' }
+        $failed = @($rows | Where-Object { $_.action -eq 'low-failed' }).Count
+        if (($failed / $rows.Count) -lt $FailShare) { return '' }
+
+        $until = (Get-Date).AddDays($Days)
+        $json = @{ downshiftOff = $true; until = $until.ToString('o'); reason = "$failed of $($rows.Count) low-gear turns hit a failure" } | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText((Get-AutoTunePath), $json, (New-Object System.Text.UTF8Encoding($false)))
+        return ("opus-tuner switched the low-effort gear off until {0}: {1} of {2} low-gear turns in the last {3} days hit a failure, and rework costs more than the gear saves. Set ""autoTune"": false in tuner.config.json to keep it on." -f $until.ToString('yyyy-MM-dd'), $failed, $rows.Count, $Days)
     } catch { return '' }
 }

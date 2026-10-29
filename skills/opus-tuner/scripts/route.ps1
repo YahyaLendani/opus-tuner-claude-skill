@@ -24,6 +24,19 @@ try {
     $ceiling = Get-Ceiling $cfg $tier
     $grace = [int64]$cfg['graceTokens']
 
+    # Did the previous low-gear turn pay? A failure during it means low effort
+    # likely caused rework, which costs more than the gear saved. One row per
+    # low turn lets session start switch the downshift off when it keeps
+    # misfiring (see Update-AutoTune).
+    $stateDirty = $false
+    if ([string]$state['gear'] -eq 'low') {
+        $outcome = if ([bool]$state['lowFailed']) { 'low-failed' } else { 'low-ok' }
+        Write-Decision $cfg $sid $ctx $tier 'low' $outcome
+        $state['gear'] = 'high'
+        $state['lowFailed'] = $false
+        $stateDirty = $true
+    }
+
     # Grace: a task that is nearly finished should not be cut off at the line.
     # Between the routine ceiling and ceiling+grace the tier steps up to deep
     # instead of asking for a wrap. This has to happen before the ceiling test,
@@ -72,6 +85,8 @@ try {
             Write-Decision $cfg $sid $ctx $tier $gear 'ceiling'
             [void]$notes.Add("[tuner] ctx $(Format-Tokens $ctx) is at the $tier ceiling ($(Format-Tokens $ceiling)). Stop starting new work. Run /wrap, then tell the user to /clear. The Stop hook blocks one stop at this ceiling, so write the brief now.")
             Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'UserPromptSubmit'; additionalContext = ($notes -join ' ') } }
+        } elseif ($stateDirty) {
+            Write-State $sid $state
         }
         exit 0
     }
@@ -125,6 +140,8 @@ try {
         $action = if ($escalate) { "escalate-$reason" } elseif ($graceEscalated) { 'escalate-grace' } else { "gear-$gear" }
         Write-Decision $cfg $sid $ctx $state['tier'] $gear $action
         Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'UserPromptSubmit'; additionalContext = ($notes -join '. ') } }
+    } elseif ($stateDirty) {
+        Write-State $sid $state
     }
 } catch { }
 exit 0
