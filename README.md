@@ -1,10 +1,10 @@
 # opus-tuner/claude-skills
 
-[![test](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/YahyaLendani/opus-tuner/actions/workflows/test.yml?query=branch%3Amain)
-[![version](https://img.shields.io/github/v/release/YahyaLendani/opus-tuner?label=version&style=flat)](https://github.com/YahyaLendani/opus-tuner/releases)
-[![license](https://img.shields.io/github/license/YahyaLendani/opus-tuner)](LICENSE)
+[![test](https://github.com/YahyaLendani/opus-tuner-claude-skill/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/YahyaLendani/opus-tuner-claude-skill/actions/workflows/test.yml?query=branch%3Amain)
+[![version](https://img.shields.io/github/v/release/YahyaLendani/opus-tuner-claude-skill?label=version&style=flat)](https://github.com/YahyaLendani/opus-tuner-claude-skill/releases)
+[![license](https://img.shields.io/github/license/YahyaLendani/opus-tuner-claude-skill)](LICENSE)
 [![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)](docs/platforms.md)
-[![code](https://img.shields.io/github/languages/top/YahyaLendani/opus-tuner)](https://github.com/YahyaLendani/opus-tuner/search?l=powershell)
+[![code](https://img.shields.io/github/languages/top/YahyaLendani/opus-tuner-claude-skill)](https://github.com/YahyaLendani/opus-tuner-claude-skill/search?l=powershell)
 [![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](#design-constraints)
 
 **Cost control for long Claude Code sessions on Windows, macOS and Linux.**
@@ -17,7 +17,7 @@ re-read it for work that did not need it.
 Six hooks, seven skills per install, a handoff writer, four effort gears, two
 profiles, and a measuring tool. No network calls, no API keys, no dependencies.
 
-> **Status:** 0.6.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.6.1. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -185,16 +185,16 @@ rights, no modules.
 ### Windows
 
 ```powershell
-git clone https://github.com/YahyaLendani/opus-tuner.git
-cd opus-tuner
+git clone https://github.com/YahyaLendani/opus-tuner-claude-skill.git
+cd opus-tuner-claude-skill
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 ```
 
 ### macOS / Linux
 
 ```sh
-git clone https://github.com/YahyaLendani/opus-tuner.git
-cd opus-tuner
+git clone https://github.com/YahyaLendani/opus-tuner-claude-skill.git
+cd opus-tuner-claude-skill
 ./install.sh
 ```
 

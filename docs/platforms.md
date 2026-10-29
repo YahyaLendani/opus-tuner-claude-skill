@@ -27,8 +27,8 @@ Nothing to install. Windows PowerShell 5.1 ships with Windows 10 and 11, and the
 installer writes hooks that run through it.
 
 ```powershell
-git clone https://github.com/YahyaLendani/opus-tuner.git
-cd opus-tuner
+git clone https://github.com/YahyaLendani/opus-tuner-claude-skill.git
+cd opus-tuner-claude-skill
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 ```
 
@@ -52,8 +52,8 @@ snap install powershell --classic       # Ubuntu / Debian
 # other:  https://aka.ms/powershell
 
 # 2. install
-git clone https://github.com/YahyaLendani/opus-tuner.git
-cd opus-tuner
+git clone https://github.com/YahyaLendani/opus-tuner-claude-skill.git
+cd opus-tuner-claude-skill
 ./install.sh
 ```
 

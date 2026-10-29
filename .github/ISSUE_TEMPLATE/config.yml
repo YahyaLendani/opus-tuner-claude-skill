@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Setup and troubleshooting
-    url: https://github.com/YahyaLendani/opus-tuner/blob/main/docs/troubleshooting.md
+    url: https://github.com/YahyaLendani/opus-tuner-claude-skill/blob/main/docs/troubleshooting.md
     about: Hooks not firing, pwsh missing, status line absent, the doctor says advisory — check here first.
   - name: Security vulnerability
-    url: https://github.com/YahyaLendani/opus-tuner/security/advisories/new
+    url: https://github.com/YahyaLendani/opus-tuner-claude-skill/security/advisories/new
     about: Do not open a public issue for anything that could execute code, leak transcript contents, or write outside the documented paths.

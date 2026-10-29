@@ -91,7 +91,9 @@ try {
     foreach ($f in $files) {
         if ($f.Length -lt 8192) { continue }
 
-        $read = [int64]0; $write = [int64]0; $input = [int64]0; $output = [int64]0; $peak = [int64]0
+        # Not $input: that is PowerShell's automatic variable for piped stdin, and
+        # assigning it can block the script when stdin is an open pipe.
+        $read = [int64]0; $write = [int64]0; $inTok = [int64]0; $output = [int64]0; $peak = [int64]0
         # Count one usage block per assistant message. A regex over the raw file
         # double counts: `usage` objects nest `iterations` (a repeat of the same
         # counts) and `cache_creation` (a breakdown of cache_creation_input_tokens).
@@ -112,7 +114,7 @@ try {
                 $ot = [int64]$u.output_tokens
                 if (($r + $w + $i + $ot) -eq 0) { continue }
 
-                $read += $r; $write += $w; $input += $i; $output += $ot
+                $read += $r; $write += $w; $inTok += $i; $output += $ot
                 $req++
                 # Context actually sent on this request, which is what the ceiling
                 # is measured against - not cache_read alone.
@@ -135,7 +137,7 @@ try {
         $p = $prices[$fam]
 
         $cost = ($read / 1e6) * $p.Read + ($write / 1e6) * $p.Write +
-                ($input / 1e6) * $p.In + ($output / 1e6) * $p.Out
+                ($inTok / 1e6) * $p.In + ($output / 1e6) * $p.Out
 
         [void]$rows.Add([pscustomobject]@{
             Session    = $f.BaseName.Substring(0, [Math]::Min(8, $f.BaseName.Length))
@@ -150,7 +152,7 @@ try {
             LastWrite  = $f.LastWriteTime.ToString('MM-dd')
         })
 
-        $tot.read += $read; $tot.write += $write; $tot.input += $input; $tot.output += $output
+        $tot.read += $read; $tot.write += $write; $tot.input += $inTok; $tot.output += $output
         $tot.req += $req; $tot.cost += $cost
     }
 
