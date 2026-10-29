@@ -66,7 +66,16 @@ $backupDir = Join-Path (Join-Path $claudeDir 'state') 'opus-tuner-backups'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $nl = if ($OnWindows) { "`r`n" } else { "`n" }
 
-$skills = @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap', 'profile')
+# Each mode installs only the skills it can use. Every installed skill's
+# description sits in the model's context on every request, so a skill that
+# cannot help here is a standing cost:
+#   - claude-skill is the hook-free fallback for Desktop and claude.ai; with
+#     hooks the opus-tuner skill and the hooks already do its job;
+#   - profile only changes what the hooks do, so it is useless without them.
+$commonSkills = @('opus-tuner', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')
+$skills = if ($NoHooks) { $commonSkills + @('claude-skill') } else { $commonSkills + @('profile') }
+# What the other mode installs, and the text that proves a folder is ours.
+$otherSkill = if ($NoHooks) { @{ name = 'profile'; marker = 'profile.ps1' } } else { @{ name = 'claude-skill'; marker = 'companion to opus-tuner' } }
 
 function ConvertTo-Hashtable {
     param($InputObject)
@@ -176,6 +185,22 @@ foreach ($s in $skills) {
     Write-Host "  ok     $s"
 }
 
+# Switching modes, or upgrading from 0.5.0 and earlier (which installed both),
+# leaves the other mode's skill behind. Move it to the backups when it is
+# recognisably ours; a user's own skill with the same name is left alone.
+$stale = Join-Path $skillsDir $otherSkill.name
+$staleMd = Join-Path $stale 'SKILL.md'
+if ((Test-Path -LiteralPath $staleMd) -and ([string](Get-Content -LiteralPath $staleMd -Raw -Encoding UTF8)).Contains($otherSkill.marker)) {
+    if ($DryRun) {
+        Write-Host "  would  move $($otherSkill.name) to backups (not used in this mode)"
+    } else {
+        if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Force -Path $backupDir | Out-Null }
+        Copy-Item -LiteralPath $stale -Destination (Join-Path $backupDir "$($otherSkill.name)-$stamp") -Recurse -Force
+        Remove-Item -LiteralPath $stale -Recurse -Force
+        Write-Host "  moved  $($otherSkill.name) to backups (not used in this mode)"
+    }
+}
+
 # ---------- 2. settings.json ----------
 Write-Host ''
 Write-Host 'hooks and status line' -ForegroundColor Yellow
@@ -207,7 +232,7 @@ if (-not $NoHooks) {
     $hooks = $settings['hooks']
 
     Set-OurHook $hooks 'UserPromptSubmit' (New-HookGroup 'route.ps1')
-    Set-OurHook $hooks 'PostToolUse' (New-HookGroup 'post-tool.ps1' 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell' 10 -Async)
+    Set-OurHook $hooks 'PostToolUse' (New-HookGroup 'post-tool.ps1' 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Read|Grep|Glob|WebFetch|mcp__.*' 10 -Async)
     Set-OurHook $hooks 'PostToolUseFailure' (New-HookGroup 'post-tool.ps1' '' 10 -Async)
     Set-OurHook $hooks 'Stop' (New-HookGroup 'stop.ps1')
     Set-OurHook $hooks 'SessionStart' (New-HookGroup 'session-start.ps1' 'startup|resume|clear|compact|fork' 15)
@@ -309,7 +334,7 @@ if ($NoHooks) {
 } else {
     Write-Host '  2. run /hooks  -> expect UserPromptSubmit, PostToolUse, PostToolUseFailure, Stop, SessionStart, PreCompact'
 }
-Write-Host '  3. run /skills -> expect opus-tuner, claude-skill, gear-low, gear-medium, gear-xhigh, gear-max, wrap, profile'
+Write-Host "  3. run /skills -> expect $($skills -join ', ')"
 $verify = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'selftest.ps1'
 $doctor = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'doctor.ps1'
 $exe = if ($OnWindows) { 'powershell -NoProfile' } else { 'pwsh -NoProfile' }

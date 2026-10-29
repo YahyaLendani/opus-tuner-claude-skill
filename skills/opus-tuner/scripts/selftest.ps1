@@ -31,6 +31,9 @@ New-Item -ItemType Directory -Force -Path $env:OPUS_TUNER_STATE | Out-Null
 $script:BaseConfig = Join-Path $sandbox 'base.json'
 [System.IO.File]::WriteAllText($script:BaseConfig, "{}`n", (New-Object System.Text.UTF8Encoding($false)))
 $env:OPUS_TUNER_CONFIG = $script:BaseConfig
+# The weekly digest fires on the first fresh start once a decision log exists.
+# Mark it as already shown, so only the test that wants it sees it.
+[System.IO.File]::WriteAllText((Join-Path $env:OPUS_TUNER_STATE 'digest.stamp'), 'test', (New-Object System.Text.UTF8Encoding($false)))
 
 . (Join-Path $here '_common.ps1')
 
@@ -495,6 +498,84 @@ $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'a misspelt profile is reported, not silently ignored' ($r.text -match 'unknown profile' -and $r.text -notmatch 'additionalContext') $r.text
 $env:OPUS_TUNER_CONFIG = $script:BaseConfig
+
+# ---------- automatic savings ----------
+Write-Host ''
+Write-Host 'automatic savings' -ForegroundColor Yellow
+
+# Weak words alone must not unlock the 250k tier for the rest of the session.
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $small 'why is this function slow')
+Check 'everyday "why is" question stays routine' ($r.text -notmatch 'tier=deep') $r.text
+
+$sid = New-Sid
+Set-Content -LiteralPath (Get-StatePath $sid) -Value '{"tier":"routine","gear":"high","files":[],"fails":1,"maxUses":0,"nudged":{}}' -Encoding UTF8
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $small 'why is the build still failing')
+Check 'weak words plus a failure escalate' ($r.text -match 'tier=deep') $r.text
+
+$sid = New-Sid
+$longAsk = 'why does the checkout page time out for some users? ' + ('It started after the last deploy and only happens on large carts with many line items. ' * 5)
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $small $longAsk)
+Check 'weak words in a long, detailed prompt escalate' ($r.text -match 'tier=deep') $r.text
+
+# The at-ceiling note goes out once per crossing, not on every prompt.
+$sid = New-Sid
+$first = Invoke-Hook 'route.ps1' (New-Payload $sid $over 'carry on')
+$second = Invoke-Hook 'route.ps1' (New-Payload $sid $over 'and the next thing')
+Check 'ceiling note is said once, not every prompt' ($first.text -match 'ceiling' -and $second.text.Length -eq 0) "first=[$($first.text)] second=[$($second.text)]"
+
+# One oversized tool result gets a single short note; small ones and edits do not.
+function New-ToolEvent {
+    param([string]$Sid, [string]$Tool, $Response)
+    return (@{ session_id = $Sid; cwd = $sandbox; hook_event_name = 'PostToolUse'; tool_name = $Tool; tool_input = @{ command = 'x' }; tool_response = $Response } | ConvertTo-Json -Compress -Depth 6)
+}
+$sid = New-Sid
+$big = @{ stdout = ('x' * 40000); stderr = ''; interrupted = $false }
+$r = Invoke-Hook 'post-tool.ps1' (New-ToolEvent $sid 'Bash' $big)
+Check 'a ~10k-token Bash result gets a note' ($r.text -match 'additionalContext' -and $r.text -match '~10k tokens' -and $r.text -match 'tail') $r.text
+$r = Invoke-Hook 'post-tool.ps1' (New-ToolEvent $sid 'Read' @{ type = 'text'; file = @{ filePath = 'a.ts'; content = 'short' } })
+Check 'a small result gets no note' ($r.text.Length -eq 0) $r.text
+$r = Invoke-Hook 'post-tool.ps1' (New-ToolEvent $sid 'Edit' @{ filePath = 'a.ts'; originalFile = ('y' * 60000) })
+Check 'an edit echoing a big file gets no note' ($r.text.Length -eq 0) $r.text
+Invoke-Hook 'post-tool.ps1' (New-ToolEvent $sid 'Bash' $big) | Out-Null
+Invoke-Hook 'post-tool.ps1' (New-ToolEvent $sid 'Bash' $big) | Out-Null
+$r = Invoke-Hook 'post-tool.ps1' (New-ToolEvent $sid 'Bash' $big)
+Check 'notes stop after the per-session cap' ($r.text.Length -eq 0 -and [int](Read-State $sid)['bigWarned'] -eq 3) $r.text
+
+# The weekly digest: once, as a zero-token systemMessage, then not for 7 days.
+Remove-Item -LiteralPath (Join-Path $env:OPUS_TUNER_STATE 'digest.stamp') -Force
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'weekly digest shows on a fresh start' ($r.text -match 'last 7 days' -and $r.text -match 'gear switch' -and $r.text -match 'systemMessage' -and $r.text -notmatch 'additionalContext') $r.text
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'weekly digest does not repeat within the week' ($r.text -notmatch 'last 7 days') $r.text
+
+# Automatic tuning: a low-gear turn that hits a failure is logged as such...
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename all the variables in the codebase')
+Invoke-Hook 'post-tool.ps1' (@{ session_id = $sid; cwd = $sandbox; hook_event_name = 'PostToolUseFailure'; tool_name = 'Bash'; tool_input = @{ command = 'x' }; error = 'Exit code 1' } | ConvertTo-Json -Compress) | Out-Null
+Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'carry on') | Out-Null
+$lowRows = @(Import-Csv -LiteralPath (Join-Path $env:OPUS_TUNER_STATE 'decisions.csv') | Where-Object { $_.session -eq $sid.Substring(0, 8) -and $_.action -like 'low-*' })
+Check 'a failed low-gear turn is logged as low-failed' ($r.text -match 'gear=low' -and $lowRows.Count -eq 1 -and $lowRows[0].action -eq 'low-failed' -and (Read-State $sid)['gear'] -eq 'high') (@($lowRows.action) -join ',')
+
+# ...and when that keeps happening, session start switches the low gear off.
+$now = (Get-Date).ToString('o')
+$rowsText = (1..5 | ForEach-Object { "$now,auto000$_,120000,routine,low,low-failed" }) -join "`r`n"
+[System.IO.File]::AppendAllText((Join-Path $env:OPUS_TUNER_STATE 'decisions.csv'), $rowsText + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'repeated low-gear failures switch the gear off, at zero tokens' ($r.text -match 'switched the low-effort gear off' -and $r.text -match 'systemMessage' -and $r.text -notmatch 'additionalContext') $r.text
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename all the variables in the codebase')
+Check 'while switched off, the router keeps the default gear' ($r.text -notmatch 'gear=low') $r.text
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'the switch-off is announced once' ($r.text -notmatch 'switched the low-effort gear off') $r.text
+Remove-Item -LiteralPath (Join-Path $env:OPUS_TUNER_STATE 'autotune.json') -Force
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename all the variables in the codebase')
+Check 'without the override, the low gear is back' ($r.text -match 'gear=low') $r.text
 
 # ---------- 7. status line ----------
 Write-Host ''

@@ -24,6 +24,19 @@ try {
     $ceiling = Get-Ceiling $cfg $tier
     $grace = [int64]$cfg['graceTokens']
 
+    # Did the previous low-gear turn pay? A failure during it means low effort
+    # likely caused rework, which costs more than the gear saved. One row per
+    # low turn lets session start switch the downshift off when it keeps
+    # misfiring (see Update-AutoTune).
+    $stateDirty = $false
+    if ([string]$state['gear'] -eq 'low') {
+        $outcome = if ([bool]$state['lowFailed']) { 'low-failed' } else { 'low-ok' }
+        Write-Decision $cfg $sid $ctx $tier 'low' $outcome
+        $state['gear'] = 'high'
+        $state['lowFailed'] = $false
+        $stateDirty = $true
+    }
+
     # Grace: a task that is nearly finished should not be cut off at the line.
     # Between the routine ceiling and ceiling+grace the tier steps up to deep
     # instead of asking for a wrap. This has to happen before the ceiling test,
@@ -36,9 +49,6 @@ try {
         $graceEscalated = $true
     }
 
-    $deepHit = $prompt -match $cfg['deepPatterns']
-    $mechHit = ($prompt -match $cfg['mechanicalPatterns']) -and (-not $deepHit) -and ($prompt.Length -lt 260)
-    $bulkHit = $prompt -match $cfg['bulkPatterns']
     $planMode = ([string]$in['permission_mode']) -eq 'plan'
     $fails = [int]$state['fails']
 
@@ -47,20 +57,37 @@ try {
         $fileCount = @($state['files']).Count
     }
 
+    # Strong words ("race condition", "refactor") escalate on their own. Weak
+    # ones ("why is", "performance") also turn up in everyday questions, so they
+    # count only alongside a second signal that the work is genuinely hard: a
+    # failure already, several files touched, plan mode, or a long, detailed
+    # prompt. An empty pattern list means "none", never "match everything".
+    $strongHit = ([string]$cfg['deepPatterns']) -and ($prompt -match $cfg['deepPatterns'])
+    $weakHit = ([string]$cfg['weakDeepPatterns']) -and ($prompt -match $cfg['weakDeepPatterns'])
+    $secondSignal = ($fails -ge 1) -or ($fileCount -ge 3) -or $planMode -or ($prompt.Length -ge 400)
+    $deepHit = $strongHit -or ($weakHit -and $secondSignal)
+    $mechHit = ($prompt -match $cfg['mechanicalPatterns']) -and (-not ($strongHit -or $weakHit)) -and ($prompt.Length -lt 260)
+    $bulkHit = $prompt -match $cfg['bulkPatterns']
+
     $notes = New-Object System.Collections.ArrayList
     $gear = 'high'
 
     # 1. Hard ceiling wins over everything: tell the model to wrap, not to work.
+    #    Said once per crossing. Repeating it on every prompt would add the same
+    #    ~70 tokens to a context that is already at its most expensive; after
+    #    the first time, the Stop hook's block and the status line carry it.
+    #    Own flag, not nudged.ceiling: that one belongs to stop.ps1, and setting
+    #    it here would suppress the user-facing /wrap banner at the next stop.
     if ($ctx -ge $ceiling) {
-        [void]$notes.Add("[tuner] ctx $(Format-Tokens $ctx) is at the $tier ceiling ($(Format-Tokens $ceiling)). Stop starting new work. Run /wrap, then tell the user to /clear. The Stop hook blocks one stop at this ceiling, so write the brief now.")
-        # Own flag, not nudged.ceiling: that one belongs to stop.ps1, and setting
-        # it here would suppress the user-facing /wrap banner at the next stop.
         if (-not [bool]$state['nudged']['routeCeiling']) {
             $state['nudged']['routeCeiling'] = $true
             Write-State $sid $state
             Write-Decision $cfg $sid $ctx $tier $gear 'ceiling'
+            [void]$notes.Add("[tuner] ctx $(Format-Tokens $ctx) is at the $tier ceiling ($(Format-Tokens $ceiling)). Stop starting new work. Run /wrap, then tell the user to /clear. The Stop hook blocks one stop at this ceiling, so write the brief now.")
+            Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'UserPromptSubmit'; additionalContext = ($notes -join ' ') } }
+        } elseif ($stateDirty) {
+            Write-State $sid $state
         }
-        Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'UserPromptSubmit'; additionalContext = ($notes -join ' ') } }
         exit 0
     }
 
@@ -113,6 +140,8 @@ try {
         $action = if ($escalate) { "escalate-$reason" } elseif ($graceEscalated) { 'escalate-grace' } else { "gear-$gear" }
         Write-Decision $cfg $sid $ctx $state['tier'] $gear $action
         Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'UserPromptSubmit'; additionalContext = ($notes -join '. ') } }
+    } elseif ($stateDirty) {
+        Write-State $sid $state
     }
 } catch { }
 exit 0

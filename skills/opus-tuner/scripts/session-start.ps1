@@ -48,6 +48,23 @@ try {
         [void]$msgs.Add("tuner.config.json names an unknown profile '$($cfg['profileInvalid'])', so the dev profile is active. Known: dev, creative.")
     }
 
+    # Once a week, on a fresh start, summarise what the tuner itself did and
+    # what its gear switches cost. Each switch re-reads the whole context once,
+    # so its price is known from the logged context size; whether the effort
+    # change bought that back is what the full weekly report helps judge. The
+    # summary rides on systemMessage, so it costs no model tokens.
+    if ($source -eq 'startup') {
+        $digest = Get-WeeklyDigest $cfg
+        if ($digest) { [void]$msgs.Add($digest) }
+    }
+
+    # Automatic tuning, safe direction only: switch the low gear off when the
+    # log shows it keeps causing failures. Checked on fresh starts and /clear.
+    if ($source -eq 'startup' -or $source -eq 'clear') {
+        $tuned = Update-AutoTune $cfg
+        if ($tuned) { [void]$msgs.Add($tuned) }
+    }
+
     # Resuming pays before the first new token: the next request re-reads the
     # whole context. Reporting the estimate costs no model tokens.
     if ($source -eq 'resume' -or $source -eq 'fork') {
