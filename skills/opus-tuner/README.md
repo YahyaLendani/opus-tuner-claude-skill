@@ -44,6 +44,7 @@ the defaults below.
 | `weakDeepPatterns` | regex | deep only with a second signal (failure, 3+ files, plan mode, 400+ char prompt) |
 | `bigOutputTokens` / `bigOutputWarnings` | 6000 / 3 | note on one oversized tool result; cap per session |
 | `weeklyDigest` | true | one zero-token summary line per week at session start |
+| `autoTune` | true | switch the low gear off for 14 days when 40%+ of 5+ recent low-gear turns hit a failure |
 | `downshift` | true | `false` never picks `gear-low` |
 | `profile` | `dev` | `dev` or `creative`; applied after the keys above. See [configuration](../../docs/configuration.md#profiles) |
 | `profiles` | — | per-profile overrides |
@@ -71,7 +72,7 @@ the test suites stay away from a live install.
 | `weekly.ps1` | manual | audit + stats against the newest baseline, written to `state/tuner/weekly-<date>.txt` |
 | `doctor.ps1` | manual | install health check: hook wiring, config validity, skills, script parse, state writable. `-Replay` executes the registered commands too; `-SkillsOnly` (implied when no hooks are registered) reports an advisory install and exits 0 |
 | `statusline.ps1` | status line | live `ctx/ceiling`, tier, effort, 5h and 7d windows |
-| `selftest.ps1` | manual / CI | 83 assertions against a synthetic transcript |
+| `selftest.ps1` | manual / CI | 88 assertions against a synthetic transcript |
 
 `VERSION` sits beside this README and is installed with it. `doctor.ps1` prints
 that number above its sections and reports it as `version` in `-Json`; the

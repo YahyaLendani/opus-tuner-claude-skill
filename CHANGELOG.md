@@ -37,11 +37,15 @@ what it cost.
   line with the week's gear switches and their re-read cost, escalations, hard
   wraps and compactions. It is a `systemMessage`, so it costs no model tokens.
   Knob: `weeklyDigest`.
+- Automatic tuning, safe direction only: each low-gear turn is logged as
+  `low-ok` or `low-failed`. When 40% or more of at least 5 such turns in 14
+  days hit a failure, session start switches the low gear off for 14 days and
+  says so once, at zero tokens. It never lowers a ceiling. Knob: `autoTune`.
 
 ### Notes
 
-- Self-test: 83 assertions (was 73); the new routing, ceiling, output-note and
-  digest tests were confirmed to fail against the 0.5.0 hooks. Installer test:
+- Self-test: 88 assertions (was 73); the new routing, ceiling, output-note,
+  digest and auto-tuning tests were confirmed to fail against the previous hooks. Installer test:
   59 assertions (was 56).
 
 ## [0.5.0] - 2026-10-29

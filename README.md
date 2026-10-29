@@ -74,7 +74,7 @@ codes stripped. The bar turns yellow at 70% and red at 90%.
 | **Compaction is watched** | Every compaction is logged, and the first manual `/compact` in a session is refused once with a pointer to `/wrap` + `/clear`. Auto-compaction is never blocked. |
 | **Decision log** | One CSV row per decision (not per prompt), so “did the gears ever pay?” is answerable a week later. |
 | **Measurement** | `audit.ps1` reports per-session cache read/write, output, peak context, and cost. `stats.ps1` reports what the tuner decided. |
-| **Automatic savings** | Weak trigger words (`why is`, `performance`) only raise the ceiling alongside a second sign of hard work. One oversized tool result gets a single ~40-token note on how to bound the next one. The at-ceiling note is said once, not every prompt. Each install mode skips the skill it cannot use. A weekly one-line summary shows what the tuner did and what its gear switches cost, at zero tokens. |
+| **Automatic savings** | Weak trigger words (`why is`, `performance`) only raise the ceiling alongside a second sign of hard work. One oversized tool result gets a single ~40-token note on how to bound the next one. The at-ceiling note is said once, not every prompt. Each install mode skips the skill it cannot use. A weekly one-line summary shows what the tuner did and what its gear switches cost, at zero tokens. If low-effort turns keep hitting failures, the low gear switches itself off for 14 days; nothing ever lowers a ceiling on its own. |
 | **Profiles** | `/profile` swaps between **dev** (the default, adds nothing) and **creative** (no `gear-low` downshift, no `gear-max`, deep tier on long-form work, one ~100-token note). `/profile show` prints exactly what is in effect. Persists across sessions. |
 | **Portable mode** | No hooks at all: `-NoHooks` installs the rules into `CLAUDE.md` only. The `claude-skill` skill carries the same discipline into Desktop and claude.ai, where hooks do not exist. |
 
@@ -248,8 +248,8 @@ Hooks only exist in Claude Code. Two fallbacks:
 
 ```powershell
 # Windows
-# 83 assertions: routing, hard wrap, compaction, handoff round trip, profiles, automatic savings, audit, timing
-# (82 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
+# 88 assertions: routing, hard wrap, compaction, handoff round trip, profiles, automatic savings, audit, timing
+# (87 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
 # 59 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, future model, against a sandbox

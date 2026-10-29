@@ -29,6 +29,7 @@ If `CLAUDE_CONFIG_DIR` is set, the file is read from `$CLAUDE_CONFIG_DIR` instea
   "bigOutputTokens": 6000,
   "bigOutputWarnings": 3,
   "weeklyDigest": true,
+  "autoTune": true,
   "mechanicalPatterns": "rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license",
   "bulkPatterns": "\\ball\\b|every|across|each file|multiple files|whole repo|whole project|codebase|batch|bulk|throughout"
 }
@@ -185,6 +186,7 @@ session.
 | `bigOutputTokens` | 6000 | a single tool result at least this large (estimated at 4 characters per token) gets a one-line note on how to bound the next one; `0` turns it off |
 | `bigOutputWarnings` | 3 | most notes per session, so a session that needs big outputs is not nagged |
 | `weeklyDigest` | `true` | once every 7 days, the first fresh session start shows one line: gear switches and their re-read cost, escalations, hard wraps, compactions |
+| `autoTune` | `true` | switch the low gear off for 14 days when it keeps causing failures (below) |
 
 The output note covers `Bash`, `PowerShell`, `Read`, `Grep`, `Glob`, `WebFetch`
 and MCP tools. Edit results are skipped: they echo the original file, which the
@@ -195,6 +197,15 @@ The weekly line is a `systemMessage`: you see it, the model does not, so it
 costs no tokens. It reads only the decision log. Gear-switch cost is the logged
 context size times the Opus cache-read rate, because each switch re-reads the
 context once; `weekly.ps1` has the full report.
+
+**Automatic tuning, one direction only.** Every low-gear turn is logged as
+`low-ok` or `low-failed` (a tool failure during it). On a fresh start or
+`/clear`, if at least 5 such turns in the last 14 days were logged and 40% or more
+failed, the router stops choosing `gear-low` for 14 days, and you are told once,
+at zero tokens. Low effort that causes rework costs more than it saves, and
+falling back to the default gear keeps the model at full strength. It never
+lowers a ceiling or picks a weaker gear on its own. The override lives in
+`state/tuner/autotune.json`; delete it to undo early, or set `"autoTune": false`.
 
 ## Decision log
 
