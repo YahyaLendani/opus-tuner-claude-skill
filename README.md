@@ -91,6 +91,89 @@ codes stripped. The bar turns yellow at 70% and red at 90%.
 Everything except the hard wrap and the first manual `/compact` is advisory.
 Hooks fail open: an error exits 0 and Claude Code continues.
 
+## Dev and creative profiles
+
+The bundle's defaults are tuned for code: drop to a low-effort gear for
+mechanical edits, spend extra thinking on race conditions, raise the ceiling for
+refactors. Those rules misfire on writing. A "no plan, no preamble" gear is the
+wrong instruction for a chapter, and "refactor" is not how anyone asks for a
+rewrite of the opening scene. So there are two profiles, and one command swaps
+them.
+
+```text
+/profile            swap dev <-> creative
+/profile creative   switch to creative
+/profile dev        switch back to dev
+/profile show       print the active profile and the exact instruction it adds
+```
+
+| | **dev** (default) | **creative** |
+|---|---|---|
+| For | code, debugging, refactors | writing, editing, brainstorming, worldbuilding |
+| Low-effort gear (`gear-low`) | used for bulk mechanical work at large context | never: its "act directly, no preamble" is wrong for prose |
+| Max-effort gear (`gear-max`) | up to 2 turns per session, on a hard problem that has already failed twice | never: extra thinking buys little for prose quality |
+| Deep tier (250k ceiling) triggered by | `refactor`, `root cause`, `race condition`, ... | `outline`, `chapter`, `story arc`, `rewrite`, `manuscript`, ... |
+| Added to the model's context | nothing | one note, ~100 tokens, at session start |
+| Ceilings, hard wrap, handoff, `/compact` guard | on | on, unchanged |
+
+Switching prints the result, and the model reads it, so the change applies from
+the next prompt of the current session as well as every later one. This is the
+real output of the switch on a config that already set a 140k routine ceiling:
+
+```text
+Switched from dev to creative.
+
+opus-tuner profile: creative
+  gear-low downshift : off
+  gear-max turns     : 0 per session
+  ceilings           : 140k routine, 250k deep
+  deep tier on       : rewrite|restructure|overhaul|outline|story arc|plot|worldbuild|chapter|manuscript|long-form|screenplay|style guide|series
+
+Instruction in effect (also added at the start of every new session):
+[tuner] profile=creative: this session is writing or ideation, not code. Drafts, options and full prose are the work: write at the length the piece needs, offer distinct alternatives when exploring, and keep the user's voice unless asked to change it. Tool rules (batch calls, grep before read) still apply when you use tools. Do not restate the brief or paste back unchanged text; quote only what changed.
+```
+
+That note is the only text a profile adds to the context. `/profile show` prints
+it verbatim, so you can check that it does not fight your own system prompt or
+`CLAUDE.md`. Dev adds nothing at all.
+
+The status line shows any profile other than dev, so a creative switch you
+forgot about is visible in the next coding session:
+
+```text
+Opus 5.5 | high | [####......] 64k/150k 43% | routine | creative | 5h 21% | 7d 9%
+```
+
+**What it does not do.** A profile does not change the model, the session's
+effort level, or the context ceilings. `/profile` is marked user-invoked only, so
+Claude does not trigger it on its own; you decide when the session switches.
+
+**Where the choice lives.** `"profile"` in `~/.claude/tuner.config.json`. The
+switch edits that one key and leaves the rest of the file, and its formatting,
+alone. A misspelt name falls back to dev and is reported at session start and by
+`doctor.ps1`.
+
+**Customising a profile.** The active profile is applied after your top-level
+settings, so switching always changes behaviour. To change what a profile does,
+override it under `profiles`:
+
+```json
+{
+  "profile": "creative",
+  "profiles": {
+    "creative": { "routineTokens": 180000, "maxTurnsPerSession": 1 }
+  }
+}
+```
+
+Every key is listed in [docs/configuration.md](docs/configuration.md#profiles).
+
+**Limits.** Profiles need the hooks, so they work wherever Claude Code runs them
+(the terminal, the VS Code panel and the Desktop app) but not with `-NoHooks`
+or the portable `claude-skill`. Upgrading from 0.4.x: pull and re-run the installer with
+`-Force`, which replaces the installed skill folders (backing them up first),
+then restart Claude Code.
+
 ## Install
 
 **Requirements:** Claude Code 2.1 or newer. Windows 10/11 needs nothing extra —
@@ -241,19 +324,8 @@ Defaults live in the scripts and are overridden by
 
 Every knob is documented in [docs/configuration.md](docs/configuration.md).
 
-### Dev and creative profiles
-
-```text
-/profile            swap dev <-> creative
-/profile creative   set one by name
-/profile show       print the active profile and the exact instruction it adds
-```
-
-**Dev** is the default and adds nothing. **Creative** is for writing and
-ideation: it never downshifts to `gear-low`, never spends `gear-max`, escalates
-the deep tier on long-form work (`outline`, `chapter`, `story arc`), and adds one
-~100-token note at session start. The choice persists across sessions and shows
-on the status line. [Details](docs/configuration.md#profiles).
+The dev / creative switch is covered in
+[Dev and creative profiles](#dev-and-creative-profiles) above.
 
 ## Measure
 
