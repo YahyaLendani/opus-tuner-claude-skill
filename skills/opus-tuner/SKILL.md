@@ -22,8 +22,9 @@ So the rules below are about *how much gets re-read* and *how many turns pay for
 3. **Never trade verification for tokens.** A "saving" that causes rework is a loss:
    one wrong turn at 150k costs more than ten careful greps.
 4. **Delegate breadth, not judgement.** Exploration, mechanical multi-file edits and
-   test runs go to a Sonnet subagent (`scout`, `hand`). Its context is discarded when
-   it returns; yours is re-read every turn.
+   test runs go to a subagent: the built-in `Explore` agent for finding code, a
+   general-purpose one (Sonnet is enough) for mechanical edits and test runs. Its
+   context is discarded when it returns; yours is re-read every turn.
 5. **Wrap at a boundary, not mid-task.** `/wrap` writes the brief, then `/clear`
    gives a fresh ~500-token context. That is cheaper than `/compact`, which pays a
    full read of the context to summarize it.

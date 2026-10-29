@@ -24,6 +24,13 @@ New-Item -ItemType Directory -Force -Path $sandbox | Out-Null
 # be set before _common.ps1 is loaded, because it captures the path at dot-source.
 $env:OPUS_TUNER_STATE = Join-Path $sandbox 'state'
 New-Item -ItemType Directory -Force -Path $env:OPUS_TUNER_STATE | Out-Null
+# Same for the config: an empty object means built-in defaults, so a developer
+# who switched their live install to the creative profile (or changed a
+# ceiling) gets the same results as CI. Tests that need a setting point at
+# their own file and restore this one afterwards.
+$script:BaseConfig = Join-Path $sandbox 'base.json'
+[System.IO.File]::WriteAllText($script:BaseConfig, "{}`n", (New-Object System.Text.UTF8Encoding($false)))
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 
 . (Join-Path $here '_common.ps1')
 
@@ -264,6 +271,14 @@ $sid = New-Sid
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop' $true)
 Check 'stop_hook_active suppresses the block' ($r.text -notmatch '"decision"') $r.text
 
+# Regression: when the prompt hook sees the ceiling first, it used to set the
+# same flag the Stop hook uses for its banner, so the user never saw the banner.
+$sid = New-Sid
+Invoke-Hook 'route.ps1' (New-Payload $sid $over 'carry on') | Out-Null
+Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop') | Out-Null
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
+Check 'ceiling seen by the router still shows the stop banner' ($r.text -match 'systemMessage' -and $r.text -match '/wrap') $r.text
+
 # A config with hardWrap off must fall back to the old banner-only behaviour.
 $noHard = Join-Path $sandbox 'nohard.json'
 # Fixtures come from the built-in defaults, never from a live install, so this
@@ -274,7 +289,7 @@ $c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $noHard -Encoding UTF8
 $env:OPUS_TUNER_CONFIG = $noHard
 $sid = New-Sid
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
-Remove-Item Env:\OPUS_TUNER_CONFIG -ErrorAction SilentlyContinue
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 Check 'hardWrap off leaves only the banner' ($r.text -notmatch '"decision"' -and $r.text -match 'systemMessage') $r.text
 
 $sid = New-Sid
@@ -314,7 +329,7 @@ $c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $noBlock -Encoding UTF8
 $env:OPUS_TUNER_CONFIG = $noBlock
 $sid = New-Sid
 $r = Invoke-Hook 'pre-compact.ps1' (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'manual' } | ConvertTo-Json -Compress)
-Remove-Item Env:\OPUS_TUNER_CONFIG -ErrorAction SilentlyContinue
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 Check 'blockManualCompact off only logs' ($r.text.Length -eq 0) $r.text
 
 # ---------- 6. enforcement ----------
@@ -378,7 +393,7 @@ Set-Content -LiteralPath $badCfg -Value '{ "routineTokens": 150000,' -Encoding U
 $env:OPUS_TUNER_CONFIG = $badCfg
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
-Remove-Item Env:\OPUS_TUNER_CONFIG -ErrorAction SilentlyContinue
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 Check 'malformed config is reported' ($r.text -match 'not valid JSON') $r.text
 
 $sid = New-Sid
@@ -403,9 +418,83 @@ Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nshould 
 $env:OPUS_TUNER_CONFIG = $offCfg
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
-Remove-Item Env:\OPUS_TUNER_CONFIG -ErrorAction SilentlyContinue
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 Check 'mode off silences session start' ($r.text.Length -eq 0 -and (Test-Path $briefPath)) $r.text
 Remove-Item -LiteralPath $briefPath -Force -ErrorAction SilentlyContinue
+
+# Regression: a compaction resets the session, and used to re-arm the
+# once-per-session limits along with it.
+$sid = New-Sid
+Set-Content -LiteralPath (Get-StatePath $sid) -Value '{"tier":"deep","gear":"high","files":[],"fails":3,"maxUses":2,"nudged":{"soft":true,"ceiling":true,"escalated":true,"hardWrap":true,"compact":true}}' -Encoding UTF8
+Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'compact'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress) | Out-Null
+$st = Read-State $sid
+Check 'compaction resets the tier and counters' ($st['tier'] -eq 'routine' -and [int]$st['fails'] -eq 0 -and -not [bool]$st['nudged']['hardWrap']) ($st | ConvertTo-Json -Compress -Depth 4)
+Check 'compaction keeps the once-per-session limits' ([bool]$st['nudged']['compact'] -and [int]$st['maxUses'] -eq 2) ($st | ConvertTo-Json -Compress -Depth 4)
+
+# Regression: mode off must not write state from the tool hook either.
+$env:OPUS_TUNER_CONFIG = $offCfg
+$sid = New-Sid
+Invoke-Hook 'post-tool.ps1' (@{ session_id = $sid; cwd = $sandbox; hook_event_name = 'PostToolUseFailure'; tool_name = 'Bash'; tool_input = @{ command = 'x' }; error = 'Exit code 1' } | ConvertTo-Json -Compress) | Out-Null
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
+Check 'mode off writes no state from tool calls' (-not (Test-Path -LiteralPath (Get-StatePath $sid)))
+
+# ---------- profiles ----------
+Write-Host ''
+Write-Host 'profiles' -ForegroundColor Yellow
+
+function Invoke-Profile {
+    param([string[]]$Arguments = @())
+    $o = & $Interpreter @ExePrefix -File (Join-Path $here 'profile.ps1') @Arguments 2>&1
+    return (($o | Where-Object { $_ -is [string] }) -join "`n")
+}
+
+$out = Invoke-Profile @('show')
+Check 'default profile is dev and adds nothing' ($out -match 'profile: dev' -and $out -match 'adds nothing') $out
+
+# A config with other settings in it: the switch must change one key only.
+$profCfg = Join-Path $sandbox 'profile.json'
+[System.IO.File]::WriteAllText($profCfg, "{`n  `"routineTokens`": 140000,`n  `"mode`": `"advise`"`n}`n", (New-Object System.Text.UTF8Encoding($false)))
+$env:OPUS_TUNER_CONFIG = $profCfg
+
+$out = Invoke-Profile
+$saved = Get-Content -LiteralPath $profCfg -Raw | ConvertFrom-Json
+Check 'bare /profile swaps dev to creative' ($out -match 'Switched from dev to creative' -and $saved.profile -eq 'creative') $out
+Check 'the switch keeps the other settings' ([int]$saved.routineTokens -eq 140000 -and $saved.mode -eq 'advise') (Get-Content -LiteralPath $profCfg -Raw)
+Check 'the switch prints the instruction it adds' ($out -match 'profile=creative') $out
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $mid 'rename all the variables in the codebase')
+Check 'creative never downshifts to gear-low' ($r.text -notmatch 'gear=low') $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'route.ps1' (New-Payload $sid $small 'outline chapter three with a darker story arc')
+Check 'creative escalates on long-form work' ($r.text -match 'tier=deep') $r.text
+
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'creative note is added at session start' ($r.text -match 'additionalContext' -and $r.text -match 'profile=creative') $r.text
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'resume'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'resume does not repeat the note' ($r.text -notmatch 'profile=creative') $r.text
+
+$slCreative = (@{ session_id = $sid; cwd = $sandbox; context_window = @{ total_input_tokens = 50000 } } | ConvertTo-Json -Compress -Depth 4)
+$r = Invoke-Hook 'statusline.ps1' $slCreative
+Check 'status line shows a non-dev profile' ($r.text -match 'creative') $r.text
+
+$out = Invoke-Profile @('dev')
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check '/profile dev switches back and goes quiet' ($out -match 'Switched from creative to dev' -and $r.text.Length -eq 0) "$out | $($r.text)"
+
+$out = Invoke-Profile @('poetry')
+Check 'unknown profile name is refused' ($out -match 'Unknown profile') $out
+
+$badProf = Join-Path $sandbox 'badprofile.json'
+Set-Content -LiteralPath $badProf -Value '{ "profile": "creatve" }' -Encoding UTF8
+$env:OPUS_TUNER_CONFIG = $badProf
+$sid = New-Sid
+$r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
+Check 'a misspelt profile is reported, not silently ignored' ($r.text -match 'unknown profile' -and $r.text -notmatch 'additionalContext') $r.text
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 
 # ---------- 7. status line ----------
 Write-Host ''

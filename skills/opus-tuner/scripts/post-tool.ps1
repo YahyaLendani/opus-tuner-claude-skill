@@ -9,6 +9,9 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
 
 try {
+    # mode: off is documented as silent, which includes not writing state.
+    if ((Get-TunerConfig)['mode'] -eq 'off') { exit 0 }
+
     $in = Get-HookInput
     $sid = [string]$in['session_id']
     if ([string]::IsNullOrWhiteSpace($sid)) { exit 0 }

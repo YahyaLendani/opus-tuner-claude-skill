@@ -53,8 +53,10 @@ try {
     # 1. Hard ceiling wins over everything: tell the model to wrap, not to work.
     if ($ctx -ge $ceiling) {
         [void]$notes.Add("[tuner] ctx $(Format-Tokens $ctx) is at the $tier ceiling ($(Format-Tokens $ceiling)). Stop starting new work. Run /wrap, then tell the user to /clear. The Stop hook blocks one stop at this ceiling, so write the brief now.")
-        if (-not [bool]$state['nudged']['ceiling']) {
-            $state['nudged']['ceiling'] = $true
+        # Own flag, not nudged.ceiling: that one belongs to stop.ps1, and setting
+        # it here would suppress the user-facing /wrap banner at the next stop.
+        if (-not [bool]$state['nudged']['routeCeiling']) {
+            $state['nudged']['routeCeiling'] = $true
             Write-State $sid $state
             Write-Decision $cfg $sid $ctx $tier $gear 'ceiling'
         }
@@ -77,7 +79,7 @@ try {
     #    Every change of gear buys one extra request that re-reads the context, so a
     #    downshift must clearly pay. Below ~200k the skill call costs about what the
     #    saved thinking is worth, so bulk wording has to justify it there.
-    if ($mechHit -and $ctx -ge [int64]$cfg['minCtxForDownshift']) {
+    if ($mechHit -and [bool]$cfg['downshift'] -and $ctx -ge [int64]$cfg['minCtxForDownshift']) {
         $mayDown = $true
         if ([bool]$cfg['downshiftRequiresBulk'] -and (-not $bulkHit) -and $ctx -lt 200000) { $mayDown = $false }
         if ($mayDown) { $gear = 'low' }

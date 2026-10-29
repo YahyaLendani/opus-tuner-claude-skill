@@ -66,7 +66,7 @@ $backupDir = Join-Path (Join-Path $claudeDir 'state') 'opus-tuner-backups'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $nl = if ($OnWindows) { "`r`n" } else { "`n" }
 
-$skills = @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')
+$skills = @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap', 'profile')
 
 function ConvertTo-Hashtable {
     param($InputObject)
@@ -309,7 +309,7 @@ if ($NoHooks) {
 } else {
     Write-Host '  2. run /hooks  -> expect UserPromptSubmit, PostToolUse, PostToolUseFailure, Stop, SessionStart, PreCompact'
 }
-Write-Host '  3. run /skills -> expect opus-tuner, claude-skill, gear-low, gear-medium, gear-xhigh, gear-max, wrap'
+Write-Host '  3. run /skills -> expect opus-tuner, claude-skill, gear-low, gear-medium, gear-xhigh, gear-max, wrap, profile'
 $verify = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'selftest.ps1'
 $doctor = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'doctor.ps1'
 $exe = if ($OnWindows) { 'powershell -NoProfile' } else { 'pwsh -NoProfile' }

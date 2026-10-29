@@ -43,7 +43,7 @@ $settingsPath = Join-Path $claudeDir 'settings.json'
 $claudeMdPath = Join-Path $claudeDir 'CLAUDE.md'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $ours = 'opus-tuner[/\\]scripts[/\\]'
-$skills = @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap')
+$skills = @('opus-tuner', 'claude-skill', 'gear-low', 'gear-medium', 'gear-xhigh', 'gear-max', 'wrap', 'profile')
 
 function ConvertTo-Hashtable {
     param($InputObject)
@@ -133,9 +133,20 @@ if (Test-Path -LiteralPath $claudeMdPath) {
 if ($KeepSkills) {
     Write-Host '  keep   skill folders (-KeepSkills)'
 } else {
+    # 'wrap' and 'profile' are common names a user may have used for a skill of
+    # their own. Remove those folders only when they are recognisably ours.
+    $markers = @{ wrap = 'brief.ps1'; profile = 'profile.ps1' }
     foreach ($s in $skills) {
         $dst = Join-Path $skillsDir $s
         if (Test-Path -LiteralPath $dst) {
+            if ($markers.ContainsKey($s)) {
+                $md = Join-Path $dst 'SKILL.md'
+                $body = if (Test-Path -LiteralPath $md) { Get-Content -LiteralPath $md -Raw -Encoding UTF8 } else { '' }
+                if (-not ([string]$body).Contains($markers[$s])) {
+                    Write-Host "  keep   $s (not an opus-tuner skill)"
+                    continue
+                }
+            }
             if ($DryRun) {
                 Write-Host "  would  remove $s"
             } else {

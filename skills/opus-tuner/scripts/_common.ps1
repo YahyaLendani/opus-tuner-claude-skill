@@ -55,6 +55,9 @@ function Get-TunerConfig {
         downshiftRequiresBulk = $true
         hardWrap              = $true
         logDecisions          = $true
+        downshift             = $true
+        profile               = 'dev'
+        profileNote           = ''
         deepPatterns          = 'refactor|architect|root cause|race condition|deadlock|migrat|redesign|why does|why is|why did|flaky|intermittent|investigate|prove|optimi[sz]|memory leak|performance|concurren|thread-safe|vulnerab|rewrite|overhaul|regression'
         mechanicalPatterns    = 'rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license'
         bulkPatterns          = '\ball\b|every|across|each file|multiple files|whole repo|whole project|codebase|batch|bulk|throughout'
@@ -68,7 +71,43 @@ function Get-TunerConfig {
             }
         } catch { }
     }
+
+    # The active profile is applied last, so switching it always changes
+    # behaviour even when the same knob is also set at the top level. To tune a
+    # profile, override it under "profiles": { "<name>": { ... } }.
+    $profiles = Get-TunerProfiles
+    $name = ([string]$cfg['profile']).Trim().ToLowerInvariant()
+    if (-not $profiles.Contains($name)) {
+        if ($name) { $cfg['profileInvalid'] = $name }
+        $name = 'dev'
+    }
+    $cfg['profile'] = $name
+    foreach ($k in $profiles[$name].Keys) { $cfg[$k] = $profiles[$name][$k] }
+    $custom = $cfg['profiles']
+    if ($custom -is [System.Collections.IDictionary] -and $custom[$name] -is [System.Collections.IDictionary]) {
+        foreach ($k in $custom[$name].Keys) { $cfg[$k] = $custom[$name][$k] }
+    }
     return $cfg
+}
+
+# Two named profiles. Dev is the defaults above, unchanged. Creative is for
+# writing and ideation, where the code-shaped rules misfire:
+#   - no downshift to gear-low, whose "no plan, no preamble" is wrong for prose;
+#   - no gear-max, because extra thinking buys little for prose quality;
+#   - the deep tier escalates on long-form vocabulary, since a draft legitimately
+#     needs more context than a code task does;
+#   - one short note tells the model what changed. It is the only text a profile
+#     adds to the context, and `profile.ps1 show` prints it verbatim.
+function Get-TunerProfiles {
+    return @{
+        dev      = @{}
+        creative = @{
+            downshift          = $false
+            maxTurnsPerSession = 0
+            deepPatterns       = 'rewrite|restructure|overhaul|outline|story arc|plot|worldbuild|chapter|manuscript|long-form|screenplay|style guide|series'
+            profileNote        = '[tuner] profile=creative: this session is writing or ideation, not code. Drafts, options and full prose are the work: write at the length the piece needs, offer distinct alternatives when exploring, and keep the user''s voice unless asked to change it. Tool rules (batch calls, grep before read) still apply when you use tools. Do not restate the brief or paste back unchanged text; quote only what changed.'
+        }
+    }
 }
 
 # Get-TunerConfig fails open to the defaults, which is correct for a hook but
@@ -122,7 +161,7 @@ function New-State {
         files   = @()
         fails   = 0
         maxUses = 0
-        nudged  = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false }
+        nudged  = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false; routeCeiling = $false }
         updated = ''
     }
 }
@@ -139,9 +178,9 @@ function Read-State {
             if (-not $s.Contains($k)) { $s[$k] = $d[$k] }
         }
         if (-not ($s['nudged'] -is [System.Collections.IDictionary])) {
-            $s['nudged'] = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false }
+            $s['nudged'] = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false; routeCeiling = $false }
         }
-        foreach ($k in @('soft', 'ceiling', 'escalated', 'hardWrap', 'compact')) {
+        foreach ($k in @('soft', 'ceiling', 'escalated', 'hardWrap', 'compact', 'routeCeiling')) {
             if (-not $s['nudged'].Contains($k)) { $s['nudged'][$k] = $false }
         }
         return $s

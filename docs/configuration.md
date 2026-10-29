@@ -121,6 +121,37 @@ downshift only pays when the context is already large and the turn is genuinely
 mechanical. Raising `minCtxForDownshift` makes the router quieter; lowering it
 makes it spend more requests on cheap turns.
 
+## Profiles
+
+| Key | Default | Effect |
+|---|---|---|
+| `profile` | `dev` | the active profile: `dev` or `creative` |
+| `profiles` | — | per-profile overrides, e.g. `{ "creative": { "routineTokens": 180000 } }` |
+| `downshift` | `true` | `false` stops the router from ever picking `gear-low` |
+
+Switch with `/profile` in Claude Code (no argument swaps, `/profile creative` or
+`/profile dev` sets one, `/profile show` prints the active one), or run
+`scripts/profile.ps1` directly. The switch edits the `"profile"` key and leaves
+the rest of the file as it was. It persists across sessions and takes effect on
+the next hook run, so the very next prompt is routed under the new profile.
+
+| | dev | creative |
+|---|---|---|
+| `gear-low` downshift | on | off: its "no plan, no preamble" is wrong for prose |
+| `gear-max` turns | 2 | 0: extra thinking buys little for prose |
+| Deep tier vocabulary | code (`refactor`, `root cause`, ...) | long-form (`outline`, `chapter`, `story arc`, ...) |
+| Added to the context | nothing | one note, ~100 tokens, at session start |
+
+The profile is applied **after** the top-level keys, so switching always changes
+behaviour even if you also set, say, `maxTurnsPerSession` at the top level. To
+change what a profile does, override it under `profiles`.
+
+The creative note is the only standing instruction a profile adds. `/profile
+show` prints it verbatim, so you can check it against your own system prompt.
+It is added at `startup`, `clear` and `compact`, not on `resume` or `fork`,
+which already carry it. A misspelt profile name falls back to `dev` and is
+reported at session start and by `doctor.ps1`.
+
 ## Classification vocabulary
 
 `deepPatterns`, `mechanicalPatterns` and `bulkPatterns` are .NET regular
@@ -170,7 +201,7 @@ pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/doctor.ps1"
 ```
 
 Checks that the hooks are registered and their scripts exist, that the config
-parses, that `routineTokens < deepTokens < autoCompactWindow`, that all seven
+parses, that `routineTokens < deepTokens < autoCompactWindow`, that all eight
 skills are installed with matching `name:` frontmatter, that every script parses,
 that the state directory is writable, and — on POSIX — that `pwsh` is on `PATH`.
 Exit code 0 means healthy; `-Json` gives the same result as machine-readable

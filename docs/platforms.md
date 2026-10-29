@@ -115,7 +115,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -NoHooks
 ./install.sh -NoHooks
 ```
 
-This installs the seven skills and the `CLAUDE.md` block, and does not read or
+This installs the eight skills and the `CLAUDE.md` block, and does not read or
 write `settings.json` at all. Consequences, stated plainly:
 
 - no ceilings are measured, no state is written, no decision log exists;

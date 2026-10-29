@@ -14,10 +14,10 @@ model and effort level you chose, but puts a ceiling on the two things that
 quietly dominate the bill: a context that grows without limit, and turns that
 re-read it for work that did not need it.
 
-Six hooks, seven skills, a handoff writer, four effort gears, and a measuring
-tool. No network calls, no API keys, no dependencies.
+Six hooks, eight skills, a handoff writer, four effort gears, two profiles, and
+a measuring tool. No network calls, no API keys, no dependencies.
 
-> **Status:** 0.4.1. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.5.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -74,6 +74,7 @@ codes stripped. The bar turns yellow at 70% and red at 90%.
 | **Compaction is watched** | Every compaction is logged, and the first manual `/compact` in a session is refused once with a pointer to `/wrap` + `/clear`. Auto-compaction is never blocked. |
 | **Decision log** | One CSV row per decision (not per prompt), so “did the gears ever pay?” is answerable a week later. |
 | **Measurement** | `audit.ps1` reports per-session cache read/write, output, peak context, and cost. `stats.ps1` reports what the tuner decided. |
+| **Profiles** | `/profile` swaps between **dev** (the default, adds nothing) and **creative** (no `gear-low` downshift, no `gear-max`, deep tier on long-form work, one ~100-token note). `/profile show` prints exactly what is in effect. Persists across sessions. |
 | **Portable mode** | No hooks at all: `-NoHooks` installs the rules into `CLAUDE.md` only. The `claude-skill` skill carries the same discipline into Desktop and claude.ai, where hooks do not exist. |
 
 ### Hooks
@@ -126,7 +127,7 @@ snap install powershell --classic
 
 ### The installer does
 
-- copy the seven skills into `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`);
+- copy the eight skills into `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`);
 - merge six hook events into `~/.claude/settings.json`, **keeping your existing
   hooks** and backing the file up first;
 - add a status line, unless you already have one;
@@ -160,8 +161,8 @@ Hooks only exist in Claude Code. Two fallbacks:
 
 ```powershell
 # Windows
-# 57 assertions: routing, hard wrap, compaction, handoff round trip, audit, timing
-# (56 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
+# 73 assertions: routing, hard wrap, compaction, handoff round trip, profiles, audit, timing
+# (72 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
 # 56 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, future model, against a sandbox
@@ -215,7 +216,7 @@ exist but you only want to validate the skills.
 In Claude Code, `/hooks` should list `UserPromptSubmit`, `PostToolUse`,
 `PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact`; `/skills` should list
 `opus-tuner`, `claude-skill`, `gear-low`, `gear-medium`, `gear-xhigh`, `gear-max`,
-`wrap`. With `-NoHooks`, `/hooks` is empty and that is expected.
+`wrap`, `profile`. With `-NoHooks`, `/hooks` is empty and that is expected.
 
 ## Configure
 
@@ -239,6 +240,20 @@ Defaults live in the scripts and are overridden by
   one if you spend most of a session below it.
 
 Every knob is documented in [docs/configuration.md](docs/configuration.md).
+
+### Dev and creative profiles
+
+```text
+/profile            swap dev <-> creative
+/profile creative   set one by name
+/profile show       print the active profile and the exact instruction it adds
+```
+
+**Dev** is the default and adds nothing. **Creative** is for writing and
+ideation: it never downshifts to `gear-low`, never spends `gear-max`, escalates
+the deep tier on long-form work (`outline`, `chapter`, `story arc`), and adds one
+~100-token note at session start. The choice persists across sessions and shows
+on the status line. [Details](docs/configuration.md#profiles).
 
 ## Measure
 
