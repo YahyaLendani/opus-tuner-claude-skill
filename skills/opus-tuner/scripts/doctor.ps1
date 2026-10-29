@@ -379,7 +379,7 @@ foreach ($c in $checks) {
     $group = switch -Regex ($c.check) {
         '^replay' { 'replay'; break }
         '^(settings|UserPromptSubmit|PostToolUse|PostToolUseFailure|Stop|SessionStart|PreCompact|PreToolUse|status|model|Opus)' { 'wiring'; break }
-        '^(routineTokens|deepTokens|mode|tuner)' { 'configuration'; break }
+        '^(routineTokens|deepTokens|mode|profile|tuner)' { 'configuration'; break }
         '^skill' { 'skills'; break }
         '^all ' { 'scripts'; break }
         default { 'runtime' }

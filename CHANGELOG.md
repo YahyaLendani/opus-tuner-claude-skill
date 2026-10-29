@@ -3,6 +3,13 @@
 All notable changes are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `doctor.ps1` printed "profile is a known value" under its own `runtime`
+  heading instead of with the other configuration checks.
+
 ## [0.6.1] - 2026-10-29
 
 Two fixes found while testing 0.6.0.
