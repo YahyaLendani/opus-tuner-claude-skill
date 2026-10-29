@@ -1,0 +1,46 @@
+name: release
+
+# Publishes the version in skills/opus-tuner/VERSION as a GitHub release:
+# creates the vX.Y.Z tag on the commit it runs from, titled like the earlier
+# releases. Run it from the Actions tab (or the API) after the version bump is
+# on main and CI is green. It never overwrites: an existing release is left alone.
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: Release notes in Markdown. Empty uses the CHANGELOG entry for VERSION.
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Publish the release for VERSION
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          v=$(tr -d '[:space:]' < skills/opus-tuner/VERSION)
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "VERSION is not semver: '$v'"; exit 1; }
+          tag="v$v"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag is already released; nothing to do."
+            exit 0
+          fi
+          if [ -n "$NOTES" ]; then
+            printf '%s\n' "$NOTES" > notes.md
+          else
+            # The CHANGELOG section for this version, heading excluded.
+            awk -v h="## [$v]" 'index($0, h) == 1 { on = 1; next } /^## \[/ && on { exit } on' CHANGELOG.md > notes.md
+          fi
+          [ -s notes.md ] || { echo "no release notes found for $v"; exit 1; }
+          printf '\nInstall: `git clone --branch %s https://github.com/%s.git`\n' "$tag" "$GITHUB_REPOSITORY" >> notes.md
+          gh release create "$tag" --target "$GITHUB_SHA" --title "opus-tuner $v" --notes-file notes.md --latest

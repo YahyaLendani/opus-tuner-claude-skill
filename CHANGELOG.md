@@ -17,6 +17,13 @@ Two fixes found while testing 0.6.0.
   `YahyaLendani/opus-tuner`. The repository is `opus-tuner-claude-skill`;
   GitHub redirected, but a redirect breaks if the old name is ever reused.
 
+### Notes
+
+- 0.5.0 and 0.6.0 were never tagged; 0.6.1 is the first release after 0.4.1
+  and carries both. Its compare link spans from v0.4.1.
+- A `release` workflow publishes the version in `VERSION` from the Actions
+  tab, so releasing no longer needs the `gh` CLI on your machine.
+
 ## [0.6.0] - 2026-10-29
 
 Savings that need no setup: the tuner now trims its own waste and tells you
@@ -336,6 +343,7 @@ First public release.
   measured slower on the development machine; see the latency section.
 - Hooks fail open: any error exits 0 and lets Claude Code continue.
 
+[0.6.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.4.1...v0.6.1
 [0.4.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/YahyaLendani/opus-tuner-claude-skill/releases/tag/v0.4.0
 
