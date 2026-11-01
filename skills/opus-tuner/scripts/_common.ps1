@@ -1,4 +1,4 @@
-﻿# Shared helpers for opus-tuner. Dot-source this from hook scripts.
+# Shared helpers for opus-tuner. Dot-source this from hook scripts.
 # Keep everything here allocation-light: these run on every tool call.
 
 $ErrorActionPreference = 'Stop'
@@ -45,7 +45,7 @@ function ConvertTo-Hashtable {
 function Get-TunerConfig {
     param([switch]$Defaults)
     $cfg = @{
-        mode                  = 'advise'
+        mode                  = 'assist'
         routineTokens         = 150000
         deepTokens            = 250000
         graceTokens           = 25000
@@ -53,13 +53,15 @@ function Get-TunerConfig {
         maxTurnsPerSession    = 2
         minCtxForDownshift    = 100000
         downshiftRequiresBulk = $true
-        hardWrap              = $true
+        hardWrap              = $false
+        blockManualCompact    = $false
         logDecisions          = $true
         downshift             = $true
         bigOutputTokens       = 6000
         bigOutputWarnings     = 3
         weeklyDigest          = $true
         autoTune              = $true
+        pricingFile           = ''
         profile               = 'dev'
         profileNote           = ''
         deepPatterns          = 'refactor|architect|root cause|race condition|deadlock|migrat|redesign|flaky|intermittent|memory leak|concurren|thread-safe|vulnerab|rewrite|overhaul|regression'
@@ -70,12 +72,16 @@ function Get-TunerConfig {
         mechanicalPatterns    = 'rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license'
         bulkPatterns          = '\ball\b|every|across|each file|multiple files|whole repo|whole project|codebase|batch|bulk|throughout'
     }
+    $named = @{}
     if (-not $Defaults -and (Test-Path -LiteralPath $script:TunerConfig)) {
         try {
             $raw = Get-Content -LiteralPath $script:TunerConfig -Raw -Encoding UTF8
             $parsed = ConvertTo-Hashtable ($raw | ConvertFrom-Json)
             if ($parsed -is [System.Collections.IDictionary]) {
-                foreach ($k in $parsed.Keys) { $cfg[$k] = $parsed[$k] }
+                foreach ($k in $parsed.Keys) {
+                    $cfg[$k] = $parsed[$k]
+                    $named[$k] = $true
+                }
             }
         } catch { }
     }
@@ -93,8 +99,28 @@ function Get-TunerConfig {
     foreach ($k in $profiles[$name].Keys) { $cfg[$k] = $profiles[$name][$k] }
     $custom = $cfg['profiles']
     if ($custom -is [System.Collections.IDictionary] -and $custom[$name] -is [System.Collections.IDictionary]) {
-        foreach ($k in $custom[$name].Keys) { $cfg[$k] = $custom[$name][$k] }
+        foreach ($k in $custom[$name].Keys) {
+            $cfg[$k] = $custom[$name][$k]
+            $named[$k] = $true
+        }
     }
+
+    # monitor shows numbers, assist also advises, guard also fires the interruptions
+    # its keys turn on. advise and enforce are the names from before 0.7, and enforce
+    # also meant both interruptions, which were then on unless switched off.
+    $modeName = ([string]$cfg['mode']).Trim().ToLowerInvariant()
+    if ($modeName -eq 'advise') {
+        $modeName = 'assist'
+    } elseif ($modeName -eq 'enforce') {
+        $modeName = 'guard'
+        foreach ($k in @('hardWrap', 'blockManualCompact')) {
+            if (-not $named.ContainsKey($k)) { $cfg[$k] = $true }
+        }
+    } elseif (@('off', 'monitor', 'assist', 'guard') -notcontains $modeName) {
+        if ($modeName) { $cfg['modeInvalid'] = $modeName }
+        $modeName = 'assist'
+    }
+    $cfg['mode'] = $modeName
 
     # An automatic switch-off from Update-AutoTune, applied last and only while
     # it lasts. It only ever turns the low gear off, never a ceiling down.
@@ -103,6 +129,13 @@ function Get-TunerConfig {
         if ($auto) { $cfg['downshift'] = $false; $cfg['autoDownshiftOffUntil'] = $auto['until'] }
     }
     return $cfg
+}
+
+# Whether a one-time interruption may fire. It takes guard mode and a real JSON
+# true: PowerShell would read the string "false" as true.
+function Test-Interruption {
+    param($Config, [string]$Key)
+    return ([string]$Config['mode'] -eq 'guard' -and $Config[$Key] -is [bool] -and $Config[$Key])
 }
 
 function Get-AutoTunePath { return (Join-Path $script:TunerState 'autotune.json') }
@@ -164,7 +197,11 @@ function Get-HookInput {
     if ([string]::IsNullOrWhiteSpace($raw)) { return @{} }
     try {
         $o = ConvertTo-Hashtable ($raw | ConvertFrom-Json)
-        if ($o -is [System.Collections.IDictionary]) { return $o }
+        if ($o -is [System.Collections.IDictionary]) {
+            $e = $o['effort']
+            if ($e -is [System.Collections.IDictionary]) { $script:ObservedEffort = [string]$e['level'] }
+            return $o
+        }
         return @{}
     } catch { return @{} }
 }
@@ -186,7 +223,24 @@ function Get-StatePath {
     return (Join-Path $script:TunerState "$safe.json")
 }
 
+# Two files per session, because they have different owners. <sid>.json is control
+# state: the tier, the one-time flags and the effort limit decide whether a hook
+# interrupts anyone, so it only moves forward, and only under its lock.
+# <sid>.diag.json holds the counters the tool hooks collect. Those hooks run async
+# and can finish in any order, so a late one can lose a counter but can never
+# touch control state.
+$script:ControlKeys = @('tier', 'gear', 'maxUses', 'nudged', 'recovered', 'updated')
+$script:DiagKeys = @('files', 'fails', 'bigWarned', 'lowFailed')
+$script:NudgeFlags = @('soft', 'ceiling', 'escalated', 'hardWrap', 'compact', 'routeCeiling')
+
+function Get-DiagPath {
+    param([string]$SessionId)
+    return [System.IO.Path]::ChangeExtension((Get-StatePath $SessionId), 'diag.json')
+}
+
 function New-State {
+    $nudged = @{}
+    foreach ($k in $script:NudgeFlags) { $nudged[$k] = $false }
     return @{
         tier    = 'routine'
         gear    = 'high'
@@ -195,48 +249,254 @@ function New-State {
         maxUses = 0
         bigWarned = 0
         lowFailed = $false
-        nudged  = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false; routeCeiling = $false }
+        recovered = $false
+        nudged  = $nudged
         updated = ''
     }
 }
 
-function Read-State {
-    param([string]$SessionId)
-    $p = Get-StatePath $SessionId
-    if (-not (Test-Path -LiteralPath $p)) { return (New-State) }
-    try {
-        $s = ConvertTo-Hashtable (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json)
-        if (-not ($s -is [System.Collections.IDictionary])) { return (New-State) }
-        $d = New-State
-        foreach ($k in $d.Keys) {
-            if (-not $s.Contains($k)) { $s[$k] = $d[$k] }
-        }
-        if (-not ($s['nudged'] -is [System.Collections.IDictionary])) {
-            $s['nudged'] = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false; routeCeiling = $false }
-        }
-        foreach ($k in @('soft', 'ceiling', 'escalated', 'hardWrap', 'compact', 'routeCeiling')) {
-            if (-not $s['nudged'].Contains($k)) { $s['nudged'][$k] = $false }
-        }
-        return $s
-    } catch { return (New-State) }
+# What a damaged control file reads as. Its flags are unknowable, so assume every
+# one-time interruption already fired and every limit is spent: a repeated prompt
+# is the failure this file exists to prevent, and a missed one costs nothing.
+function New-RecoveredState {
+    $s = New-State
+    $s['tier'] = 'deep'
+    $s['maxUses'] = 99
+    $s['recovered'] = $true
+    foreach ($k in $script:NudgeFlags) { $s['nudged'][$k] = $true }
+    return $s
 }
 
-function Write-State {
-    param([string]$SessionId, $State)
-    $State['updated'] = (Get-Date).ToString('o')
-    $p = Get-StatePath $SessionId
-    $json = $State | ConvertTo-Json -Depth 8 -Compress
-    # post-tool.ps1 runs async and several tool calls can finish at once, so a
-    # concurrent writer can hold the file for a few milliseconds. Retrying beats
-    # silently dropping the counter update.
-    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+# status: ok, missing, bad (not a JSON object), busy (would not open). The name
+# gets a second look because a replace on Windows can hide it for an instant, and
+# "missing" is what a brand new session looks like.
+function Read-StateFile {
+    param([string]$Path)
+    $text = $null
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        if (-not [System.IO.File]::Exists($Path)) {
+            if ($attempt -ge 1) { return @{ status = 'missing' } }
+            Start-Sleep -Milliseconds 5
+            continue
+        }
         try {
-            [System.IO.File]::WriteAllText($p, $json, (New-Object System.Text.UTF8Encoding($false)))
-            return
-        } catch {
-            if ($attempt -lt 2) { Start-Sleep -Milliseconds 20 }
+            $text = Read-SharedText $Path
+            break
+        } catch { Start-Sleep -Milliseconds 15 }
+    }
+    if ($null -eq $text) { return @{ status = 'busy' } }
+    try { $data = ConvertTo-Hashtable ($text | ConvertFrom-Json) } catch { return @{ status = 'bad' } }
+    if (-not ($data -is [System.Collections.IDictionary])) { return @{ status = 'bad' } }
+    return @{ status = 'ok'; data = $data }
+}
+
+# Fills in what an older file lacks. $null when the flags cannot be trusted. Other
+# keys carry through: a session that spans the upgrade has its counters in here.
+function ConvertTo-ControlState {
+    param($Data)
+    $s = New-State
+    foreach ($k in $Data.Keys) { $s[$k] = $Data[$k] }
+    if (-not ($s['nudged'] -is [System.Collections.IDictionary])) { return $null }
+    $limit = 0
+    if (-not [int]::TryParse([string]$s['maxUses'], [ref]$limit)) { return $null }
+    foreach ($k in $script:NudgeFlags) {
+        if (-not $s['nudged'].Contains($k)) { $s['nudged'][$k] = $false }
+    }
+    return $s
+}
+
+function Add-Diagnostics {
+    param($View, [string]$SessionId)
+    $d = Read-StateFile (Get-DiagPath $SessionId)
+    if ($d['status'] -ne 'missing') {
+        $defaults = New-State
+        foreach ($k in $script:DiagKeys) {
+            if ($d['status'] -eq 'ok' -and $d['data'].Contains($k)) { $View[$k] = $d['data'][$k] } else { $View[$k] = $defaults[$k] }
         }
     }
+    # A counter that is not a number would make every hook reading it throw, and
+    # hooks fail silently, so the session would just stop being tracked.
+    foreach ($k in @('fails', 'bigWarned')) {
+        $n = 0
+        if (-not [int]::TryParse([string]$View[$k], [ref]$n)) { $View[$k] = 0 }
+    }
+}
+
+# One session's state as a read-only view. Atomic replaces make this safe without
+# the lock; changing anything goes through Update-State.
+function Read-State {
+    param([string]$SessionId)
+    if ([string]::IsNullOrWhiteSpace($SessionId)) { return (New-State) }
+    $r = Read-StateFile (Get-StatePath $SessionId)
+    $view = $null
+    if ($r['status'] -eq 'missing') { $view = New-State }
+    elseif ($r['status'] -eq 'ok') { $view = ConvertTo-ControlState $r['data'] }
+    if ($null -eq $view) { $view = New-RecoveredState }
+    Add-Diagnostics $view $SessionId
+    return $view
+}
+
+# Test seams, inert unless the overlap tests set OPUS_TUNER_TEST_BARRIER. They make
+# the interleavings in tests/state-test.ps1 deterministic rather than a matter of
+# timing: 'waiting' reports a contended lock, and the barrier parks an update
+# between its read and its write.
+function Set-TestSignal {
+    param([string]$Name)
+    if ($env:OPUS_TUNER_TEST_BARRIER) { [System.IO.File]::WriteAllText("$($env:OPUS_TUNER_TEST_BARRIER).$Name", '') }
+}
+
+function Wait-TestBarrier {
+    if (-not $env:OPUS_TUNER_TEST_BARRIER) { return }
+    Set-TestSignal 'reached'
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not [System.IO.File]::Exists("$($env:OPUS_TUNER_TEST_BARRIER).go") -and $sw.ElapsedMilliseconds -lt 15000) {
+        Start-Sleep -Milliseconds 10
+    }
+}
+
+# An exclusive handle on a lock file, or $null after the timeout. The OS releases
+# it when the holder dies, so a crashed hook cannot wedge a session. The file stays
+# after use: deleting it would let two processes each hold "the" lock.
+function Enter-StateLock {
+    param([string]$Path, [int]$TimeoutMs = 2000)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $signalled = $false
+    while ($true) {
+        try {
+            return (New-Object System.IO.FileStream($Path, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None))
+        } catch {
+            if (-not $signalled) {
+                Set-TestSignal 'waiting'
+                $signalled = $true
+            }
+            if ($sw.ElapsedMilliseconds -ge $TimeoutMs) { return $null }
+            Start-Sleep -Milliseconds 15
+        }
+    }
+}
+
+# Comparable text for one file's worth of keys, to skip writes that change nothing.
+function Get-StateSnapshot {
+    param($State, [string[]]$Keys)
+    $o = [ordered]@{}
+    foreach ($k in $Keys) {
+        if ($k -eq 'updated') { continue }
+        $v = $State[$k]
+        if ($v -is [System.Collections.IDictionary]) {
+            $n = [ordered]@{}
+            foreach ($x in @($v.Keys | Sort-Object)) { $n[$x] = $v[$x] }
+            $v = $n
+        }
+        $o[$k] = $v
+    }
+    return ($o | ConvertTo-Json -Depth 6 -Compress)
+}
+
+# The whole read-modify-write of one file, under that file's lock. $Action receives
+# the merged view and changes it in place; only the keys this file owns are saved.
+# Returns $true when the result is safely on disk. On $false nothing may be
+# announced as done: there was no session, no lock or no write, and a caller that
+# interrupted anyway could do so again next time.
+#
+# Scriptblocks see their caller's variables by name, so the st prefix below keeps
+# these locals from shadowing what an $Action reads.
+function Update-State {
+    param([string]$SessionId, [scriptblock]$Action, [switch]$Diagnostics)
+    if ([string]::IsNullOrWhiteSpace($SessionId)) { return $false }
+    $stFile = if ($Diagnostics) { Get-DiagPath $SessionId } else { Get-StatePath $SessionId }
+    $stLock = Enter-StateLock ([System.IO.Path]::ChangeExtension($stFile, 'lock'))
+    if (-not $stLock) { return $false }
+
+    $stSaved = $false
+    $stRecovered = $false
+    try {
+        if ($Diagnostics) {
+            $stKeys = $script:DiagKeys
+            $stOut = @{}
+            $stView = Read-State $SessionId
+        } else {
+            $stKeys = $script:ControlKeys
+            $stOut = @{}
+            $stRead = Read-StateFile $stFile
+            if ($stRead['status'] -eq 'busy') { return $false }
+            $stView = $null
+            if ($stRead['status'] -eq 'missing') { $stView = New-State }
+            elseif ($stRead['status'] -eq 'ok') {
+                $stView = ConvertTo-ControlState $stRead['data']
+                foreach ($k in $stRead['data'].Keys) { $stOut[$k] = $stRead['data'][$k] }
+            }
+            if ($null -eq $stView) {
+                $stView = New-RecoveredState
+                $stRecovered = $true
+            }
+            Add-Diagnostics $stView $SessionId
+        }
+
+        $stBefore = Get-StateSnapshot $stView $stKeys
+        $stDeep = ([string]$stView['tier'] -eq 'deep')
+        $stMax = [int]$stView['maxUses']
+        $stFlags = @{}
+        foreach ($k in $script:NudgeFlags) { $stFlags[$k] = [bool]$stView['nudged'][$k] }
+
+        $null = & $Action $stView
+
+        # Control state only moves forward. Reset-State is the one way back.
+        if ($stDeep) { $stView['tier'] = 'deep' }
+        if ([int]$stView['maxUses'] -lt $stMax) { $stView['maxUses'] = $stMax }
+        foreach ($k in $script:NudgeFlags) {
+            if ($stFlags[$k]) { $stView['nudged'][$k] = $true }
+        }
+
+        Wait-TestBarrier
+
+        if (-not $stRecovered -and (Get-StateSnapshot $stView $stKeys) -ceq $stBefore) {
+            $stSaved = $true
+        } else {
+            foreach ($k in $stKeys) { $stOut[$k] = $stView[$k] }
+            if (-not $Diagnostics) { $stOut['updated'] = (Get-Date).ToString('o') }
+            $stSaved = Write-AtomicText $stFile ($stOut | ConvertTo-Json -Depth 8 -Compress)
+        }
+    } finally { $stLock.Dispose() }
+
+    if ($stRecovered -and $stSaved) { Write-Decision (Get-TunerConfig) $SessionId 0 'deep' 'high' 'state-recovered' }
+    return $stSaved
+}
+
+# A session start is the one thing allowed to move control state back. A compaction
+# is the same session with a smaller context, so -KeepLimits keeps the once-per-session
+# limits: otherwise the manual /compact refusal and the gear-max ration would re-arm.
+function Reset-State {
+    param([string]$SessionId, [switch]$KeepLimits)
+    if ([string]::IsNullOrWhiteSpace($SessionId)) { return $false }
+    $file = Get-StatePath $SessionId
+    $lock = Enter-StateLock ([System.IO.Path]::ChangeExtension($file, 'lock'))
+    if (-not $lock) { return $false }
+    try {
+        $fresh = New-State
+        if ($KeepLimits) {
+            $read = Read-StateFile $file
+            $old = $null
+            if ($read['status'] -eq 'missing') { $old = New-State }
+            elseif ($read['status'] -eq 'ok') { $old = ConvertTo-ControlState $read['data'] }
+            if ($null -eq $old) { $old = New-RecoveredState }
+            $fresh['maxUses'] = [int]$old['maxUses']
+            $fresh['recovered'] = [bool]$old['recovered']
+            $fresh['nudged']['compact'] = [bool]$old['nudged']['compact']
+        }
+        $out = @{}
+        foreach ($k in $script:ControlKeys) { $out[$k] = $fresh[$k] }
+        $out['updated'] = (Get-Date).ToString('o')
+        if (-not (Write-AtomicText $file ($out | ConvertTo-Json -Depth 8 -Compress))) { return $false }
+    } finally { $lock.Dispose() }
+
+    $diag = Get-DiagPath $SessionId
+    $diagLock = Enter-StateLock ([System.IO.Path]::ChangeExtension($diag, 'lock'))
+    if ($diagLock) {
+        try {
+            if ([System.IO.File]::Exists($diag)) { [System.IO.File]::Delete($diag) }
+        } catch { } finally { $diagLock.Dispose() }
+    }
+    return $true
 }
 
 # Reads only the tail of a transcript. Transcripts reach 100+ MB; reading the
@@ -270,74 +530,69 @@ function Read-FileTail {
     finally { if ($fs) { $fs.Dispose() } }
 }
 
-# Finds the last "usage" object in a block of text that reports a non-zero
-# token count. Returns @{ sum; index } or $null.
-#
-# A usage object is not flat: it nests "server_tool_use" and "cache_creation",
-# so a regex like \{.*?\} truncates it. Brute force instead: locate each
-# `"usage":{`, then walk forward with a depth counter (string-aware, so a brace
-# inside message text cannot unbalance it). Iterating backwards means the usual
-# case stops at the first candidate.
-function Find-LastUsage {
-    param([string]$Text)
-    if (-not $Text) { return $null }
+# Empties any string too long to matter, or holding an escape, before a line is
+# parsed. Short plain strings stay, which covers every field read below. A single
+# transcript line can be megabytes of tool output, and ConvertFrom-Json takes
+# hundreds of ms over that on PowerShell 5.1.
+$script:LongStringPattern = '"(?<keep>[^"\\]{0,255})"|"[^"\\]*(?:\\.[^"\\]*)*"'
+$script:UsageParseFailures = 0
 
-    $starts = New-Object System.Collections.ArrayList
-    foreach ($m in [regex]::Matches($Text, '"usage"\s*:\s*\{')) {
-        [void]$starts.Add($m.Index + $m.Length - 1)
-    }
-
-    for ($k = $starts.Count - 1; $k -ge 0; $k--) {
-        $start = [int]$starts[$k]
-        $depth = 0
-        $inStr = $false
-        $esc = $false
-        $end = -1
-
-        for ($j = $start; $j -lt $Text.Length; $j++) {
-            $c = $Text[$j]
-            if ($inStr) {
-                if ($esc) { $esc = $false }
-                elseif ($c -ceq '\') { $esc = $true }
-                elseif ($c -ceq '"') { $inStr = $false }
-                continue
-            }
-            if ($c -ceq '"') { $inStr = $true; continue }
-            if ($c -ceq '{') { $depth++ }
-            elseif ($c -ceq '}') {
-                $depth--
-                if ($depth -eq 0) { $end = $j; break }
-            }
-        }
-        if ($end -lt 0) { continue }
-
-        $block = $Text.Substring($start, $end - $start + 1)
-
-        # Only the top-level members count. A usage object repeats the same
-        # numbers inside a nested "iterations" array, so summing every match
-        # doubles the total. Every nested object begins at the first inner
-        # brace, and the top-level token keys precede it.
-        $cut = $block.IndexOf('{', 1)
-        $flat = if ($cut -gt 0) { $block.Substring(0, $cut) } else { $block }
-
-        $sum = [int64]0
-        foreach ($key in @('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens')) {
-            $km = [regex]::Match($flat, '"' + $key + '":(\d+)')
-            if (-not $km.Success) { $km = [regex]::Match($block, '"' + $key + '":(\d+)') }
-            if ($km.Success) { $sum += [int64]$km.Groups[1].Value }
-        }
-        if ($sum -gt 0) { return @{ sum = $sum; index = $start } }
-    }
-    return $null
+function ConvertTo-TokenCount {
+    param($Value)
+    $n = [int64]0
+    if ($null -ne $Value) { try { $n = [int64]$Value } catch { $n = [int64]0 } }
+    if ($n -lt 0) { return [int64]0 }
+    return $n
 }
 
-# Context size = input + cache_read + cache_creation of the last assistant
-# message. That sum is what the next request actually re-reads.
+# One transcript line as one request's usage, or $null when the line is anything
+# else. It is parsed rather than scanned, so spacing, field order, nested usage
+# objects and usage quoted in message text cannot change the answer: only an
+# assistant record's own message.usage counts, not a toolUseResult's. The text
+# checks only skip lines that cannot qualify. A line that should qualify but will
+# not parse is counted in $script:UsageParseFailures.
+function Read-UsageRecord {
+    param([string]$Line)
+    if ($Line.IndexOf('"usage"') -lt 0 -or $Line.IndexOf('"assistant"') -lt 0) { return $null }
+    $o = $null
+    try {
+        $o = [regex]::Replace($Line, $script:LongStringPattern, '"${keep}"') | ConvertFrom-Json
+    } catch {
+        # Emptying can leave duplicate blank keys, which 5.1 refuses.
+        try { $o = $Line | ConvertFrom-Json } catch {
+            $script:UsageParseFailures++
+            return $null
+        }
+    }
+    if ($null -eq $o -or [string]$o.type -cne 'assistant') { return $null }
+    $u = $o.message.usage
+    if ($null -eq $u) { return $null }
+    return @{
+        input          = ConvertTo-TokenCount $u.input_tokens
+        output         = ConvertTo-TokenCount $u.output_tokens
+        cacheRead      = ConvertTo-TokenCount $u.cache_read_input_tokens
+        cacheWrite     = ConvertTo-TokenCount $u.cache_creation_input_tokens
+        write5m        = ConvertTo-TokenCount $u.cache_creation.ephemeral_5m_input_tokens
+        write1h        = ConvertTo-TokenCount $u.cache_creation.ephemeral_1h_input_tokens
+        speed          = [string]$u.speed
+        geo            = [string]$u.inference_geo
+        model          = [string]$o.message.model
+        requestedModel = [string]$o.requestedModel
+        messageId      = [string]$o.message.id
+        requestId      = [string]$o.requestId
+        uuid           = [string]$o.uuid
+        isSidechain    = ($o.isSidechain -eq $true)
+        effort         = [string]$o.effort
+        perTurnEffort  = [string]$o.perTurnEffort
+    }
+}
+
+# Context size = input + cache_read + cache_creation of the last main-thread
+# assistant message. That sum is what the next request actually re-reads.
 #
-# Reads raw text rather than parsing lines as JSON: a single transcript line can
-# be hundreds of KB, and ConvertFrom-Json on it costs ~200 ms on PowerShell 5.1.
 # The window escalates because the newest lines in a transcript are bookkeeping,
-# which can push the last usage block out of the first window.
+# which can push the last usage block out of the first window. Walking from the
+# newest line means the usual case parses one record.
 function Get-ContextInfo {
     param([string]$TranscriptPath, [int]$Bytes = 524288)
     $result = @{ ctx = [int64]0; model = ''; found = $false }
@@ -346,18 +601,18 @@ function Get-ContextInfo {
         $text = Read-FileTail -Path $TranscriptPath -Bytes $window
         if (-not $text) { continue }
 
-        $hit = Find-LastUsage -Text $text
-        if (-not $hit) { continue }
-
-        $result.ctx = [int64]$hit.sum
-        $result.found = $true
-
-        $from = [Math]::Max(0, $hit.index - 4000)
-        $head = $text.Substring($from, $hit.index - $from)
-        $mm = [regex]::Matches($head, '"model":"([^"]+)"')
-        if ($mm.Count -gt 0) { $result.model = $mm[$mm.Count - 1].Groups[1].Value }
-
-        return $result
+        $lines = $text.Split([char]10)
+        for ($i = $lines.Length - 1; $i -ge 0; $i--) {
+            $rec = Read-UsageRecord -Line $lines[$i]
+            if ($null -eq $rec -or $rec.isSidechain) { continue }
+            $sum = $rec.input + $rec.cacheRead + $rec.cacheWrite
+            # A quota-error message ends a real transcript with an all-zero block.
+            if ($sum -le 0) { continue }
+            $result.ctx = [int64]$sum
+            $result.model = $rec.model
+            $result.found = $true
+            return $result
+        }
     }
     return $result
 }
@@ -376,18 +631,352 @@ function Get-Ceiling {
     return [int64]$Config['routineTokens']
 }
 
-function Get-NewestTranscript {
-    $projects = Join-Path $script:TunerRoot 'projects'
-    if (-not (Test-Path -LiteralPath $projects)) { return $null }
-    $f = Get-ChildItem -LiteralPath $projects -Recurse -Filter '*.jsonl' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($f) { return $f.FullName }
-    return $null
+# A reader that never stands in the way of an atomic replace: a writer swapping
+# the file in only needs Delete sharing from everyone holding it open.
+function Read-SharedText {
+    param([string]$Path)
+    $share = [System.IO.FileShare]'ReadWrite,Delete'
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    try {
+        $reader = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+        return $reader.ReadToEnd()
+    } finally { $fs.Dispose() }
+}
+
+# Temp file in the same directory, flushed to disk, then swapped in. A crash at
+# any point leaves either the old file or the new one, never half of either. The
+# swap retries because on Windows a scanner or indexer can hold the target for a
+# moment. Returns $false when the swap never succeeded.
+function Write-AtomicText {
+    param([string]$Path, [string]$Text)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $tmp = "$Path.$PID.$([guid]::NewGuid().ToString('N').Substring(0, 8)).tmp"
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Text)
+    try {
+        $fs = New-Object System.IO.FileStream($tmp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $fs.Write($bytes, 0, $bytes.Length)
+            $fs.Flush($true)
+        } finally { $fs.Dispose() }
+        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            try {
+                if ([System.IO.File]::Exists($Path)) {
+                    [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)
+                } else {
+                    [System.IO.File]::Move($tmp, $Path)
+                }
+                return $true
+            } catch {
+                Start-Sleep -Milliseconds (10 + 5 * $attempt)
+            }
+        }
+        return $false
+    } finally {
+        if ([System.IO.File]::Exists($tmp)) { try { [System.IO.File]::Delete($tmp) } catch { } }
+    }
+}
+
+# Masks credentials before text is saved or injected. Deliberately eager: a
+# masked word in a handoff costs a re-read, a leaked key costs a rotation. The
+# word "tokens" stays readable, because this bundle talks about it constantly.
+function Protect-Sensitive {
+    param([string]$Text)
+    if (-not $Text) { return $Text }
+    $t = $Text
+    $t = [regex]::Replace($t, '-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\z)', '[REDACTED:private-key]')
+    $t = [regex]::Replace($t, '\b([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s:@''"]+:[^/\s@''"]+@', '$1[REDACTED]@')
+    $t = [regex]::Replace($t, '(?i)\b((?:proxy-)?authorization)(["'']?\s*[:=]\s*["'']?)(?:(?:bearer|basic|token|digest)\s+)?[^\s"'',;]+', '$1$2[REDACTED]')
+    $t = [regex]::Replace($t, '(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}', '$1 [REDACTED]')
+    $secretWords = 'password|passwd|pwd|passphrase|secret|token(?!s\b)|api[_-]?key|access[_-]?key|private[_-]?key|session[_-]?key|credential'
+    $t = [regex]::Replace($t, '(?i)(?<![a-z0-9-])(--?[a-z0-9-]*(?:' + $secretWords + ')[a-z0-9-]*)(=|\s+)("[^"]*"|''[^'']*''|\S+)', '$1$2[REDACTED]')
+    $t = [regex]::Replace($t, '(?i)(\b[a-z0-9_.-]*(?:' + $secretWords + ')[a-z0-9_.-]*["'']?)(\s*[:=]\s*)("[^"]*"|''[^'']*''|[^\s,;&''"]+)', '$1$2[REDACTED]')
+    foreach ($shape in @(
+        '\bsk-[A-Za-z0-9_-]{16,}',
+        '\bgh[pousr]_[A-Za-z0-9]{20,}',
+        '\bgithub_pat_[A-Za-z0-9_]{20,}',
+        '\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b',
+        '\bxox[abeoprs]-[A-Za-z0-9-]{10,}',
+        '\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}',
+        '\bAIza[0-9A-Za-z_-]{30,}',
+        '\bglpat-[A-Za-z0-9_-]{16,}',
+        '\bnpm_[A-Za-z0-9]{30,}'
+    )) {
+        $t = [regex]::Replace($t, $shape, '[REDACTED]')
+    }
+    return $t
+}
+
+# ---------- session identity ----------
+#
+# Nothing may be attributed to a session on a guess. An id comes from the caller,
+# or from the variable Claude Code exports to its own shell tools. A literal
+# "${CLAUDE_SESSION_ID}" is a skill whose substitution did not run, not an id.
+function Resolve-SessionId {
+    param([string]$Explicit = '')
+    $id = $Explicit
+    if ($id -match '^\$\{') { $id = '' }
+    if ([string]::IsNullOrWhiteSpace($id)) { $id = [string]$env:CLAUDE_CODE_SESSION_ID }
+    return $id.Trim()
+}
+
+function Test-SessionId {
+    param([string]$Id)
+    return ($Id -cmatch '^[A-Za-z0-9_-]{1,128}$')
+}
+
+# Returns @{ ok; transcript; error }. An explicit path must belong to the session;
+# otherwise only the exact file name counts, in exactly one project folder.
+function Resolve-SessionTranscript {
+    param([string]$SessionId, [string]$Transcript = '')
+    if ($Transcript) {
+        if (-not (Test-Path -LiteralPath $Transcript)) { return @{ ok = $false; error = "transcript not found: $Transcript" } }
+        $own = ([System.IO.Path]::GetFileNameWithoutExtension($Transcript) -ceq $SessionId)
+        if (-not $own) {
+            $tail = Read-FileTail -Path $Transcript -Bytes 131072
+            $own = $tail -and ($tail -match ('"sessionId"\s*:\s*"' + [regex]::Escape($SessionId) + '"'))
+        }
+        if (-not $own) { return @{ ok = $false; error = "transcript does not belong to session ${SessionId}: $Transcript" } }
+        return @{ ok = $true; transcript = $Transcript }
+    }
+    $root = Join-Path $script:TunerRoot 'projects'
+    $hits = @()
+    if (Test-Path -LiteralPath $root) {
+        $hits = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "$SessionId.jsonl" } |
+            Where-Object { Test-Path -LiteralPath $_ })
+    }
+    if ($hits.Count -eq 0) { return @{ ok = $false; error = "no transcript for session $SessionId under $root" } }
+    if ($hits.Count -gt 1) { return @{ ok = $false; error = "session $SessionId has $($hits.Count) transcripts; pass -Transcript" } }
+    return @{ ok = $true; transcript = $hits[0] }
+}
+
+# Every working directory the transcript's recent records report, newest last.
+function Get-TranscriptCwds {
+    param([string]$Path)
+    $out = New-Object System.Collections.ArrayList
+    $tail = Read-FileTail -Path $Path -Bytes 524288
+    if (-not $tail) { return , $out }
+    foreach ($m in [regex]::Matches($tail, '"cwd"\s*:\s*("(?:[^"\\]|\\.)*")')) {
+        try { $v = [string]($m.Groups[1].Value | ConvertFrom-Json) } catch { continue }
+        if ($v) {
+            [void]$out.Remove($v)
+            [void]$out.Add($v)
+        }
+    }
+    return , $out
+}
+
+function ConvertTo-ComparablePath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $p = $Path
+    try { $p = [System.IO.Path]::GetFullPath($p) } catch { }
+    $p = $p.TrimEnd('\', '/').Replace('\', '/')
+    if ($script:OnWindows) { $p = $p.ToLowerInvariant() }
+    return $p
+}
+
+function Test-SameProject {
+    param([string]$A, [string]$B)
+    $x = ConvertTo-ComparablePath $A
+    return ($x -and $x -ceq (ConvertTo-ComparablePath $B))
+}
+
+# Same directory, or one inside the other: a session can cd within its project.
+function Test-RelatedProject {
+    param([string]$A, [string]$B)
+    $x = ConvertTo-ComparablePath $A
+    $y = ConvertTo-ComparablePath $B
+    if (-not $x -or -not $y) { return $false }
+    return ($x -ceq $y -or $x.StartsWith("$y/", [System.StringComparison]::Ordinal) -or $y.StartsWith("$x/", [System.StringComparison]::Ordinal))
+}
+
+# ---------- handoffs ----------
+#
+# One file per session, outside any repository, so a concurrent session can
+# neither overwrite one nor pick it up. Required sections come first: truncating
+# an oversize handoff at injection then only ever costs the derived facts.
+$script:HandoffRequired = @('Task goal', 'User constraints', 'Decisions', 'Unresolved problems', 'Verification results', 'Next step')
+$script:HandoffMaxChars = 6000
+
+function Get-HandoffDir { return (Join-Path $script:TunerState 'handoffs') }
+
+function Get-HandoffPath {
+    param([string]$SessionId)
+    return (Join-Path (Get-HandoffDir) "$($SessionId -replace '[^A-Za-z0-9_-]', '_').md")
+}
+
+# Returns the parsed file, or $null for anything that is not a handoff.
+function Read-Handoff {
+    param([string]$Path)
+    try {
+        $text = Read-SharedText $Path
+        $m = [regex]::Match($text, '(?s)\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\z')
+        if (-not $m.Success) { return $null }
+        $h = @{ path = $Path; body = $m.Groups[2].Value; session_id = ''; project = ''; transcript = ''; status = ''; written = '' }
+        foreach ($line in ($m.Groups[1].Value -split "`r?`n")) {
+            $kv = [regex]::Match($line, '^([a-z_]+):\s*(.*)$')
+            if ($kv.Success) { $h[$kv.Groups[1].Value] = $kv.Groups[2].Value.Trim() }
+        }
+        return $h
+    } catch { return $null }
+}
+
+function Get-HandoffAgeHours {
+    param([string]$Path)
+    return ((Get-Date) - (Get-Item -LiteralPath $Path).LastWriteTime).TotalHours
+}
+
+# The ready handoffs written in this project in the last 24 hours. An older one
+# would resurrect work the project has moved past.
+function Get-WaitingHandoffs {
+    param([string]$Cwd)
+    $out = New-Object System.Collections.ArrayList
+    $dir = Get-HandoffDir
+    if (-not (Test-Path -LiteralPath $dir)) { return , $out }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -ErrorAction SilentlyContinue)) {
+        $h = Read-Handoff $f.FullName
+        if (-not $h -or $h['status'] -ne 'ready') { continue }
+        if (-not (Test-SameProject $h['project'] $Cwd)) { continue }
+        if ((Get-HandoffAgeHours $f.FullName) -gt 24) { continue }
+        [void]$out.Add($h)
+    }
+    return , $out
+}
+
+# Markers are what SessionEnd leaves behind: <sid>.claim when the session ran
+# /clear, <sid>.ended whenever it ended at all.
+function Set-HandoffMarker {
+    param([string]$SessionId, [string]$Kind, [string]$Cwd)
+    $path = [System.IO.Path]::ChangeExtension((Get-HandoffPath $SessionId), $Kind)
+    $json = @{ session_id = $SessionId; cwd = $Cwd; time = (Get-Date).ToString('o') } | ConvertTo-Json -Compress
+    [void](Write-AtomicText $path $json)
+}
+
+function Remove-HandoffMarkers {
+    param([string]$SessionId)
+    $base = Get-HandoffPath $SessionId
+    foreach ($kind in @('claim', 'ended')) {
+        $p = [System.IO.Path]::ChangeExtension($base, $kind)
+        if (Test-Path -LiteralPath $p) { try { Remove-Item -LiteralPath $p -Force } catch { } }
+    }
+}
+
+# Fresh claims for this directory whose handoff is still ready. SessionEnd runs
+# moments before the matching SessionStart, so an old claim belongs to a start
+# that never happened and must not be picked up by an unrelated one.
+function Get-HandoffClaims {
+    param([string]$Cwd, [int]$MaxAgeSeconds = 120)
+    $out = New-Object System.Collections.ArrayList
+    $dir = Get-HandoffDir
+    if (-not (Test-Path -LiteralPath $dir)) { return , $out }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.claim' -ErrorAction SilentlyContinue)) {
+        try {
+            if (((Get-Date) - $f.LastWriteTime).TotalSeconds -gt $MaxAgeSeconds) { continue }
+            $claim = ConvertTo-Hashtable (Read-SharedText $f.FullName | ConvertFrom-Json)
+            if (-not (Test-SameProject ([string]$claim['cwd']) $Cwd)) { continue }
+            $h = Read-Handoff ([System.IO.Path]::ChangeExtension($f.FullName, 'md'))
+            if ($h -and $h['status'] -eq 'ready') { [void]$out.Add($h) }
+        } catch { }
+    }
+    return , $out
+}
+
+# Whoever renames the handoff itself owns it, so racing starts cannot both inject
+# it, whichever marker led them here. The copy kept for a while in case the pickup
+# went wrong is scrubbed: the file may have been edited by hand since verification.
+function Receive-Handoff {
+    param($Handoff)
+    $path = [string]$Handoff['path']
+    $taken = "$path.$PID.taken"
+    $moved = $false
+    for ($attempt = 0; $attempt -lt 10 -and -not $moved; $attempt++) {
+        if (-not [System.IO.File]::Exists($path)) { return $null }
+        try {
+            [System.IO.File]::Move($path, $taken)
+            $moved = $true
+        } catch { Start-Sleep -Milliseconds 20 }
+    }
+    if (-not $moved) { return $null }
+
+    $fresh = Read-Handoff $taken
+    if (-not $fresh) {
+        try { [System.IO.File]::Move($taken, $path) } catch { }
+        return $null
+    }
+    Remove-HandoffMarkers ([string]$Handoff['session_id'])
+    $kept = Join-Path (Join-Path (Get-HandoffDir) 'consumed') (Split-Path -Leaf $path)
+    try {
+        [void](Write-AtomicText $kept (Protect-Sensitive (Read-SharedText $taken)))
+        Remove-Item -LiteralPath $taken -Force
+    } catch { }
+    return $fresh
+}
+
+# What goes into the new session: the body, scrubbed again, because the file may
+# have been edited by hand since verification.
+function Get-HandoffInjection {
+    param($Handoff)
+    $text = Protect-Sensitive (([string]$Handoff['body']) -replace "`r`n", "`n")
+    $text = $text.Trim()
+    if ($text.Length -gt $script:HandoffMaxChars) {
+        $cut = $text.LastIndexOf("`n", $script:HandoffMaxChars)
+        if ($cut -lt 0) { $cut = $script:HandoffMaxChars }
+        $text = $text.Substring(0, $cut) + "`n...[truncated]"
+    }
+    return $text
+}
+
+# Housekeeping for directories that otherwise only grow. Runs on fresh starts. Only
+# files this bundle names: the decision log, baselines and reports are not touched.
+function Remove-OldTunerFiles {
+    $now = Get-Date
+    if (Test-Path -LiteralPath $script:TunerState) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $script:TunerState -File -ErrorAction SilentlyContinue)) {
+            $days = ($now - $f.LastWriteTime).TotalDays
+            $old = switch -Regex ($f.Name) {
+                '\.tmp$'               { $days -gt 1; break }
+                '\.(lock|diag\.json)$' { $days -gt 30; break }
+                default                { $false }
+            }
+            if ($old) { try { Remove-Item -LiteralPath $f.FullName -Force } catch { } }
+        }
+    }
+    $dir = Get-HandoffDir
+    if (-not (Test-Path -LiteralPath $dir)) { return }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Recurse -ErrorAction SilentlyContinue)) {
+        $days = ($now - $f.LastWriteTime).TotalDays
+        $old = switch -Regex ($f.Name) {
+            '\.(tmp|taken)$'    { $days -gt 1; break }
+            '\.(claim|ended)$'  { $days -gt 7; break }
+            default             { $days -gt 30 }
+        }
+        if ($old) { try { Remove-Item -LiteralPath $f.FullName -Force } catch { } }
+    }
+}
+
+$script:DecisionHeader = 'time,session,ctx,tier,gear,action,effective_effort'
+
+# Logs from before effective_effort get the column once. Their rows stay as they
+# are, and read back with it blank.
+function Update-DecisionHeader {
+    param([string]$Log)
+    $stream = [System.IO.File]::Open($Log, 'Open', 'Read', 'ReadWrite, Delete')
+    try {
+        $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding($false)))
+        $first = $reader.ReadLine()
+    } finally { $stream.Dispose() }
+    if ($null -eq $first -or $first -match 'effective_effort') { return }
+    $text = [System.IO.File]::ReadAllText($Log)
+    [void](Write-AtomicText $Log ($script:DecisionHeader + $text.Substring($first.Length)))
 }
 
 # One line per decision, not per prompt. Without this the bundle can only be
-# judged by its end effect on cost, weeks later; with it, "gears fired 40 times
-# and none of them paid" is answerable from a file. Rotates at 1 MB, keeps one.
+# judged by its end effect on cost, weeks later; with it, how often each gear
+# fired, and at what context size, is answerable from a file. `gear` is the effort
+# the router asked for. `effective_effort` is what Claude Code itself reported for
+# the turn, blank when it reported nothing. Rotates at 1 MB, keeps one.
 function Write-Decision {
     param($Config, [string]$SessionId, [int64]$Ctx, [string]$Tier, [string]$Gear, [string]$Action)
     if ($Config -and $Config.ContainsKey('logDecisions') -and -not [bool]$Config['logDecisions']) { return }
@@ -400,15 +989,19 @@ function Write-Decision {
         }
         $id = $SessionId
         if ($id.Length -gt 8) { $id = $id.Substring(0, 8) }
-        $line = '{0},{1},{2},{3},{4},{5}' -f (Get-Date).ToString('o'), $id, $Ctx, $Tier, $Gear, $Action
+        $effort = [string]$script:ObservedEffort
+        if (-not $effort) { $effort = [string]$env:CLAUDE_EFFORT }
+        $effort = $effort -replace '[^A-Za-z0-9_-]', ''
+        $line = '{0},{1},{2},{3},{4},{5},{6}' -f (Get-Date).ToString('o'), $id, $Ctx, $Tier, $Gear, $Action, $effort
         # One append, header included, instead of Test-Path plus two Add-Content
         # calls: this runs inside a blocking hook, and Add-Content costs ~17 ms a
         # call on Windows PowerShell. AppendAllText is ~1 ms.
         $enc = New-Object System.Text.UTF8Encoding($false)
         if (Test-Path -LiteralPath $log) {
+            Update-DecisionHeader $log
             [System.IO.File]::AppendAllText($log, $line + "`r`n", $enc)
         } else {
-            [System.IO.File]::AppendAllText($log, "time,session,ctx,tier,gear,action`r`n" + $line + "`r`n", $enc)
+            [System.IO.File]::AppendAllText($log, $script:DecisionHeader + "`r`n" + $line + "`r`n", $enc)
         }
     } catch { }
 }
@@ -418,7 +1011,7 @@ function Write-Decision {
 # only the decision log (no transcripts), so it stays cheap at session start.
 # Returns '' when it is not due, logging is off, or nothing happened.
 function Get-WeeklyDigest {
-    param($Config, [double]$CacheReadPerM = 1.50)
+    param($Config)
     try {
         if ($Config -and $Config.ContainsKey('logDecisions') -and -not [bool]$Config['logDecisions']) { return '' }
         if ($Config -and $Config.ContainsKey('weeklyDigest') -and -not [bool]$Config['weeklyDigest']) { return '' }
@@ -438,20 +1031,20 @@ function Get-WeeklyDigest {
         # A gear switch is any prompt the router sent away from the default
         # gear: its own row ('gear-low'), or an escalation row that also chose one.
         $gearRows = @($rows | Where-Object { ($_.action -like 'gear-*') -or ($_.action -like 'escalate-*' -and $_.gear -and $_.gear -ne 'high') })
-        $gearCost = 0.0
-        foreach ($g in $gearRows) { $gearCost += ([double]$g.ctx / 1e6) * $CacheReadPerM }
+        $gearTokens = 0.0
+        foreach ($g in $gearRows) { $gearTokens += [double]$g.ctx }
         $escalations = @($rows | Where-Object { $_.action -like 'escalate-*' }).Count
         $wraps = @($rows | Where-Object { $_.action -eq 'hard-wrap' }).Count
         $compactions = @($rows | Where-Object { $_.action -eq 'compact-manual' -or $_.action -eq 'compact-auto' }).Count
 
-        return ("opus-tuner, last 7 days: {0} gear switch(es) costing ~`${1:0.00} in extra context re-reads, {2} deep escalation(s), {3} hard wrap(s), {4} compaction(s). Full report: weekly.ps1." -f $gearRows.Count, $gearCost, $escalations, $wraps, $compactions)
+        return ("opus-tuner, last 7 days: {0} gear switch(es) that re-read ~{1} of context, {2} deep escalation(s), {3} Stop prompt(s), {4} compaction(s). Full report: weekly.ps1." -f $gearRows.Count, (Format-Tokens $gearTokens), $escalations, $wraps, $compactions)
     } catch { return '' }
 }
 
 # Switch the low gear off for 14 days when it keeps misfiring. Each low-gear
 # turn logs 'low-ok' or 'low-failed' (a tool failure during it). With at least
-# 5 such turns in the last 14 days and 40% or more failed, low effort is causing
-# rework, which costs more than the gear saves, so the router stops choosing it.
+# 5 such turns in the last 14 days and 40% or more failed, low effort looks like
+# it is causing rework, so the router stops choosing it.
 # Only ever this direction: falling back to the default gear keeps the model at
 # full strength. Runs at session start; returns a message for the user, or ''.
 function Update-AutoTune {
@@ -473,7 +1066,7 @@ function Update-AutoTune {
 
         $until = (Get-Date).AddDays($Days)
         $json = @{ downshiftOff = $true; until = $until.ToString('o'); reason = "$failed of $($rows.Count) low-gear turns hit a failure" } | ConvertTo-Json -Compress
-        [System.IO.File]::WriteAllText((Get-AutoTunePath), $json, (New-Object System.Text.UTF8Encoding($false)))
-        return ("opus-tuner switched the low-effort gear off until {0}: {1} of {2} low-gear turns in the last {3} days hit a failure, and rework costs more than the gear saves. Set ""autoTune"": false in tuner.config.json to keep it on." -f $until.ToString('yyyy-MM-dd'), $failed, $rows.Count, $Days)
+        if (-not (Write-AtomicText (Get-AutoTunePath) $json)) { return '' }
+        return ("opus-tuner switched the low-effort gear off until {0}: {1} of {2} low-gear turns in the last {3} days hit a failure. Set ""autoTune"": false in tuner.config.json to keep it on." -f $until.ToString('yyyy-MM-dd'), $failed, $rows.Count, $Days)
     } catch { return '' }
 }

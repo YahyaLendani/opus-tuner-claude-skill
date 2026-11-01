@@ -1,14 +1,14 @@
-# PreToolUse hook (Read): in "enforce" mode, refuse bulk reads once the tier
-# ceiling is reached. A burst of full-file reads is what pushes a session past
-# the cap between two of the model's decisions.
-# Default mode is "advise", where this script exits immediately.
+# PreToolUse hook (Read): in guard mode, refuse bulk reads once the tier ceiling
+# is reached. A burst of full-file reads is what pushes a session past the ceiling
+# between two of the model's decisions. Registered only by install.ps1 -Enforce;
+# in every other mode this script exits immediately.
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
 
 try {
     $cfg = Get-TunerConfig
-    if ($cfg['mode'] -ne 'enforce') { exit 0 }
+    if ($cfg['mode'] -ne 'guard') { exit 0 }
 
     $in = Get-HookInput
     $tool = [string]$in['tool_name']
@@ -32,7 +32,7 @@ try {
             hookSpecificOutput = @{
                 hookEventName            = 'PreToolUse'
                 permissionDecision       = 'deny'
-                permissionDecisionReason = "Context is at $(Format-Tokens $ctx), the $tier ceiling ($(Format-Tokens $ceiling)). Pass offset/limit <= 400, grep first, or wrap: run brief.ps1 then /clear."
+                permissionDecisionReason = "Context is at $(Format-Tokens $ctx), the $tier ceiling ($(Format-Tokens $ceiling)). Pass offset/limit <= 400 or grep first. If the user wants to continue in a fresh session, prepare a handoff with /wrap and ask them to run /clear."
             }
         }
     }

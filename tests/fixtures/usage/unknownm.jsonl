@@ -1,0 +1,5 @@
+{"type":"assistant","uuid":"unk-1","requestId":"req_unk1","message":{"id":"msg_unk1","model":"claude-future-9","usage":{"input_tokens":100000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":100000}}}
+{"type":"assistant","uuid":"unk-2","requestId":"req_unk2","message":{"id":"msg_unk2","model":"claude-opus-9","usage":{"input_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0}}}
+{"type":"assistant","uuid":"unk-3","requestId":"req_unk3","message":{"id":"msg_unk3","model":"claude-opus-4-7","usage":{"input_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0,"speed":"fast"}}}
+{"type":"assistant","uuid":"unk-4","requestId":"req_unk4","message":{"id":"msg_unk4","model":"claude-opus-5-5","usage":{"input_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":100}}}
+{"type":"assistant","uuid":"unk-5","message":{"id":"msg_unk5","model":"<synthetic>","usage":{"input_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0}}}

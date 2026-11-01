@@ -10,8 +10,10 @@ runs with your user privileges, exactly like any other hook you configure.
 - No network calls, telemetry, or update checks.
 - No API keys, tokens, or credentials.
 - No third-party binaries or packages.
-- It never runs `/clear`, `/compact`, or any slash command. The hard wrap asks the
-  model to write a brief; clearing the session remains your action.
+- It never runs `/clear`, `/compact`, or any slash command. Clearing the session is
+  always your action, and no hook can block it.
+- A handoff omits raw command arguments unless `-IncludeCommandArgs` is passed, and
+  masks credential-shaped values before saving anything.
 
 ## Trust boundary
 
@@ -25,11 +27,12 @@ The scripts read:
 - `~/.claude/settings.json` (installation only)
 - `~/.claude/tuner.config.json` (configuration)
 - `~/.claude/state/tuner/` (session state and the decision log)
-- the current transcript tail under `~/.claude/projects/` (read-only, last 512 KB)
-- the project's `.claude/handoff.md` (handoff)
+- the current session's transcript under `~/.claude/projects/` (read-only)
 
-They write only under `~/.claude/state/tuner/`, the handoff file, and the settings
-file during install/uninstall.
+They write only under `~/.claude/state/tuner/`, which includes the per-session
+handoffs in `handoffs/`, plus `tuner.config.json`, `CLAUDE.md` and the settings file
+during install/uninstall, each backed up first. A handoff holds a summary of your
+session, so treat that folder like the transcripts themselves.
 
 ## Reporting a vulnerability
 

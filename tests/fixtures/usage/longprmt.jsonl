@@ -1,0 +1,2 @@
+{"type":"assistant","uuid":"long-1","requestId":"req_long1","message":{"id":"msg_long1","model":"claude-haiku-5-5","usage":{"input_tokens":1000,"cache_read_input_tokens":120000,"cache_creation_input_tokens":0,"output_tokens":100}}}
+{"type":"assistant","uuid":"long-2","requestId":"req_long2","message":{"id":"msg_long2","model":"claude-haiku-5-5","usage":{"input_tokens":100000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0}}}

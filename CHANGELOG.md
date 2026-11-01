@@ -5,10 +5,56 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-01
+
+Reliability: handoffs that belong to one session, state that overlapping hooks cannot
+corrupt, interruptions you opt into, and usage figures that can be checked. No new
+savings are claimed. The benchmark harness is included, and its results are pending.
+
+### Changed
+
+- **Modes.** `mode` can be `monitor`, `assist` (the new default) or `guard`. The Stop prompt
+  and manual-compaction blocking are off unless `guard` is set and each one is enabled.
+  An upgrade keeps what you had chosen. See "Upgrading from before 0.7" in
+  [docs/configuration.md](docs/configuration.md).
+- **Handoffs are per session.** `brief.ps1` needs the exact session and writes to
+  `handoffs/<session>.md`. It reports a problem instead of falling back to the newest
+  transcript. `-Verify` checks the required sections before `/clear` is suggested.
+- **Costs are per request,** at that request's own model, from a versioned table
+  (`references/pricing.json`, or your own through `pricingFile` or `-Pricing`). Unknown
+  models are labelled, not guessed, and every figure is called an API-equivalent estimate.
+- `decisions.csv` has an `effective_effort` column, separate from the requested gear.
+  Existing logs are upgraded in place.
+- The weekly digest reports context re-read in tokens, not a dollar figure at one rate.
+- The skills and docs no longer repeat cost claims, or suggest the model controls `/clear`
+  or `/compact`, that a fresh session always starts near 500 tokens, or that a handoff is
+  always cheaper than compaction.
+
 ### Fixed
 
+- A handoff could be written from another project's newest transcript, overwritten by a
+  concurrent session, or picked up by the wrong one. Raw command arguments are now omitted
+  by default, and sensitive values are redacted before anything is saved.
+- Overlapping hooks could reverse a tier escalation, lose a control flag, or fire a
+  one-time interruption again. Control state now has a cross-process lock around the whole
+  update, atomic replacement and a stale-write guard. A damaged file no longer re-enables a
+  completed interruption.
+- `ctx.ps1` could report a size from a nested `usage` object in a tool result (666,666 in
+  place of 1,310 on the regression fixture). Usage is now read from the real record whatever
+  its spacing or field order.
+- `audit.ps1` priced a whole session at one model's rates, counted repeated transcript
+  records more than once, rounded small costs away and skipped small files.
+- `stats.ps1` reported "no decisions" over recent rows, because its date filter never matched.
 - `doctor.ps1` printed "profile is a known value" under its own `runtime`
   heading instead of with the other configuration checks.
+
+### Added
+
+- `benchmarks/`: compares default Claude Code, a short instruction file and opus-tuner on
+  equal terms. **No live results yet.**
+- `session-end.ps1`, which records that a session has ended, so that its handoff can be
+  picked up at the next start.
+- `tests/`: handoff, state, modes, usage, docs and benchmark suites, with fixtures of known totals.
 
 ## [0.6.1] - 2026-10-29
 
@@ -350,6 +396,7 @@ First public release.
   measured slower on the development machine; see the latency section.
 - Hooks fail open: any error exits 0 and lets Claude Code continue.
 
+[0.7.0]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.4.1...v0.6.1
 [0.4.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/YahyaLendani/opus-tuner-claude-skill/releases/tag/v0.4.0

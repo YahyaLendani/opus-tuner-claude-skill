@@ -14,6 +14,8 @@ $ErrorActionPreference = 'Stop'
 try {
     $cfg = Get-TunerConfig
     if ($cfg['mode'] -eq 'off') { exit 0 }
+    # Monitor reports to the user and adds nothing to the model's context.
+    $monitor = ([string]$cfg['mode'] -eq 'monitor')
 
     $in = Get-HookInput
     $sid = [string]$in['session_id']
@@ -26,16 +28,10 @@ try {
     # counters reset, but the once-per-session limits (the manual /compact
     # refusal and the gear-max ration) must not re-arm, or they stop being
     # once per session.
-    if (-not [string]::IsNullOrWhiteSpace($sid)) {
-        if ($source -eq 'compact') {
-            $old = Read-State $sid
-            $fresh = New-State
-            $fresh['maxUses'] = [int]$old['maxUses']
-            $fresh['nudged']['compact'] = [bool]$old['nudged']['compact']
-            Write-State $sid $fresh
-        } elseif ($source -ne 'resume' -and $source -ne 'fork') {
-            Write-State $sid (New-State)
-        }
+    if ($source -eq 'compact') {
+        $null = Reset-State $sid -KeepLimits
+    } elseif ($source -ne 'resume' -and $source -ne 'fork') {
+        $null = Reset-State $sid
     }
 
     $msgs = New-Object System.Collections.ArrayList
@@ -47,12 +43,15 @@ try {
     if ($cfg.ContainsKey('profileInvalid')) {
         [void]$msgs.Add("tuner.config.json names an unknown profile '$($cfg['profileInvalid'])', so the dev profile is active. Known: dev, creative.")
     }
+    if ($cfg.ContainsKey('modeInvalid')) {
+        [void]$msgs.Add("tuner.config.json names an unknown mode '$($cfg['modeInvalid'])', so assist is active. Known: off, monitor, assist, guard.")
+    }
 
     # Once a week, on a fresh start, summarise what the tuner itself did and
-    # what its gear switches cost. Each switch re-reads the whole context once,
-    # so its price is known from the logged context size; whether the effort
-    # change bought that back is what the full weekly report helps judge. The
-    # summary rides on systemMessage, so it costs no model tokens.
+    # how much context its gear switches re-read. Each switch re-reads the whole
+    # context once, so that figure comes from the logged context size. Whether
+    # the effort change was worth it takes a measurement this summary cannot make.
+    # The summary rides on systemMessage, so it costs no model tokens.
     if ($source -eq 'startup') {
         $digest = Get-WeeklyDigest $cfg
         if ($digest) { [void]$msgs.Add($digest) }
@@ -60,52 +59,73 @@ try {
 
     # Automatic tuning, safe direction only: switch the low gear off when the
     # log shows it keeps causing failures. Checked on fresh starts and /clear.
-    if ($source -eq 'startup' -or $source -eq 'clear') {
+    if (-not $monitor -and ($source -eq 'startup' -or $source -eq 'clear')) {
         $tuned = Update-AutoTune $cfg
         if ($tuned) { [void]$msgs.Add($tuned) }
     }
 
-    # Resuming pays before the first new token: the next request re-reads the
-    # whole context. Reporting the estimate costs no model tokens.
+    # Resuming re-reads the whole context on the next request. Saying how large it
+    # is costs no model tokens.
     if ($source -eq 'resume' -or $source -eq 'fork') {
         $info = Get-ContextInfo -TranscriptPath ([string]$in['transcript_path'])
         $ceiling = Get-Ceiling $cfg 'routine'
         if ($info.found -and $info.ctx -ge $ceiling) {
-            # Opus cache-read rate, same table as audit.ps1. An estimate of the
-            # first request, not an invoice.
-            $cost = [Math]::Round(($info.ctx / 1e6) * 1.50, 2)
-            [void]$msgs.Add("resuming at $(Format-Tokens $info.ctx): the next request re-reads it (~`$$cost at Opus cache-read rates). If that work is finished, /wrap then /clear starts at about 500 tokens.")
+            $advice = if ($monitor) { '' } else { ' If that work is finished, /wrap then /clear starts a fresh session.' }
+            [void]$msgs.Add("resuming at $(Format-Tokens $info.ctx): the next request re-reads it.$advice")
         }
     }
 
-    # Where the brief gets picked up. /clear is the primary path. In the VS Code
-    # panel a new conversation often starts as 'startup' instead, so accept a
-    # brief written in the last 24 hours there; an older one is stale and would
-    # resurrect work the session has moved past.
+    # A resumed session is alive again, so its handoff is no longer up for grabs.
+    if (($source -eq 'resume' -or $source -eq 'fork') -and -not [string]::IsNullOrWhiteSpace($sid)) {
+        Remove-HandoffMarkers $sid
+    }
+    if ($source -eq 'startup') { Remove-OldTunerFiles }
+
+    # Which handoff this start may load. /clear takes the one its own session
+    # claimed on the way out. In the VS Code panel a new conversation often starts
+    # as 'startup' instead, so there the only candidate qualifies once the session
+    # that wrote it has ended. Anything less certain is announced, never injected:
+    # the handoff may belong to another session still running in this project.
     $body = ''
-    if (-not [string]::IsNullOrWhiteSpace($cwd)) {
-        $brief = Join-Path (Join-Path $cwd '.claude') 'handoff.md'
-        if (Test-Path -LiteralPath $brief) {
-            $inject = $false
-            if ($source -eq 'clear') {
-                $inject = $true
-            } elseif ($source -eq 'startup') {
-                $age = (Get-Date) - (Get-Item -LiteralPath $brief).LastWriteTime
-                if ($age.TotalHours -le 24) { $inject = $true }
+    if (($source -eq 'clear' -or $source -eq 'startup') -and -not [string]::IsNullOrWhiteSpace($cwd)) {
+        $waiting = Get-WaitingHandoffs $cwd
+        $picked = $null
+        $ambiguous = $false
+        if ($monitor) {
+            # Announced below like any other handoff this start may not load.
+        } elseif ($source -eq 'clear') {
+            $claims = Get-HandoffClaims $cwd
+            if ($claims.Count -eq 1) {
+                $picked = $claims[0]
+            } elseif ($claims.Count -gt 1) {
+                $ambiguous = $true
             }
-
-            if ($inject) {
-                $text = Get-Content -LiteralPath $brief -Raw -Encoding UTF8
-                if (-not [string]::IsNullOrWhiteSpace($text)) {
-                    $text = $text -replace "`r`n", "`n"
-                    if ($text.Length -gt 6000) { $text = $text.Substring(0, 6000) + "`n...[truncated]" }
-                    $body = "Resuming from a handoff brief. It is the working state; continue from its Next step and do not re-explore what it already records.`n`n$text"
-
-                    # Consume it so a later /clear in an unrelated session does
-                    # not resurrect it.
-                    try { Move-Item -LiteralPath $brief -Destination (Join-Path (Join-Path $cwd '.claude') 'handoff.consumed.md') -Force } catch { }
-                }
+        } elseif ($waiting.Count -eq 1) {
+            if (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($waiting[0]['path'], 'ended'))) {
+                $picked = $waiting[0]
             }
+        }
+
+        if ($picked) {
+            $received = Receive-Handoff $picked
+            if ($received) {
+                $body = "Resuming from a handoff brief. It is the working state; continue from its Next step and do not re-explore what it already records.`n`n$(Get-HandoffInjection $received)"
+            }
+            $waiting = @($waiting | Where-Object { $_['path'] -ne $picked['path'] })
+        }
+
+        $paths = @($waiting | ForEach-Object { $_['path'] })
+        if ($paths.Count -gt 0) {
+            $why = if ($monitor) { 'monitor mode does not load one automatically' }
+                   elseif ($ambiguous) { 'several sessions in this project were cleared at once, so none was loaded' }
+                   else { 'only the session that wrote a handoff may load it automatically' }
+            [void]$msgs.Add("$($paths.Count) handoff(s) wait for this project; $why. If one is yours, ask Claude to read it: $($paths -join ', ')")
+        }
+
+        # A shared file from an older version has no owner, so it is only reported.
+        $legacy = Join-Path (Join-Path $cwd '.claude') 'handoff.md'
+        if (Test-Path -LiteralPath $legacy) {
+            [void]$msgs.Add("An older opus-tuner left $legacy. It is shared by every session in the project, so it is no longer loaded automatically. Ask Claude to read it if it is yours, then delete it.")
         }
     }
 
@@ -114,7 +134,7 @@ try {
     # it away, so it goes in on every source except those two.
     $context = New-Object System.Collections.ArrayList
     $note = [string]$cfg['profileNote']
-    if ($note -and $source -ne 'resume' -and $source -ne 'fork') { [void]$context.Add($note) }
+    if ($note -and -not $monitor -and $source -ne 'resume' -and $source -ne 'fork') { [void]$context.Add($note) }
     if ($body) { [void]$context.Add($body) }
 
     $out = @{}

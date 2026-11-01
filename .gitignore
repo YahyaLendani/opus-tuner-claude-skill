@@ -5,6 +5,7 @@ state/
 *.log
 settings.json
 tuner.config.json
+benchmarks/results/
 
 # Editor / OS noise
 .DS_Store

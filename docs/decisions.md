@@ -41,32 +41,35 @@ ceiling. Order is part of the contract, and the self-test asserts it.
 **Consequence.** A session between `routineTokens` and `+graceTokens` steps up to
 deep instead of being asked to wrap. Beyond the band, the ceiling wins.
 
-## 4. Hard wrap once, and never clear the session
+## 4. A one-time Stop prompt, off by default, and never clear the session
 
-**Context.** A banner is easy to ignore; a session that runs to 900k pays for it
-on every subsequent request. But an unattended `/clear` would throw away work the
-user may still be reading.
+**Context.** A banner is easy to miss, but interrupting someone's turn is a cost
+they should choose. An unattended `/clear` would throw away work the user may still
+be reading.
 
-**Decision.** At the ceiling the `Stop` hook returns `decision: "block"` with a
-reason that asks for `/wrap`. It fires at most once per crossing
-(`nudged.hardWrap`), never when `stop_hook_active` is set, and Claude Code's
-eight-continuation cap is a second backstop. Hooks cannot invoke slash commands,
-so `/clear` stays a human action.
+**Decision.** In guard mode with `hardWrap` on, the `Stop` hook returns
+`decision: "block"` at the ceiling with a reason that asks for a handoff if work
+remains. It fires at most once per crossing (`nudged.hardWrap`) and never when
+`stop_hook_active` is set. Hooks cannot invoke slash commands, so `/clear` stays a
+human action. Until 0.7 this was on by default, with no opt-in.
 
-**Consequence.** The ceiling is a gate, not a wall. A model that ignores the
-reason can still finish; it just cannot do so silently. `hardWrap: false` restores
-banner-only behaviour.
+**Consequence.** It is a prompt, not a limit. A model that ignores the reason can
+still finish, and nothing limits the context between stops. Whether it is worth having
+is an open question for the benchmarks in `benchmarks/`.
 
-## 5. Handoff instead of compaction
+## 5. Offer a handoff next to compaction
 
-**Context.** `/compact` pays a full read of the context to produce a summary, and
-the summary is then re-read on every later request.
+**Context.** `/compact` reads the context to produce a summary, and the summary is
+then re-read on every later request. A handoff has its own costs: writing it,
+starting a session, and rebuilding what it leaves out. Which one wins depends on the
+task, and no recorded comparison exists yet.
 
-**Decision.** `/wrap` writes a brief from transcript facts, then the user runs
-`/clear`. A new session starts at roughly 500 tokens.
+**Decision.** `/wrap` prepares a handoff from transcript facts, the model fills in and
+verifies it, and the user runs `/clear` if they want a fresh session. Both remain
+available.
 
-**Consequence.** A boundary costs one extra human action. In exchange the new
-context is small and the old one is gone, which is the point.
+**Consequence.** A boundary costs one extra human action. The docs do not call either
+one cheaper until a benchmark has recorded it.
 
 ## 6. Never switch the model mid-session
 
@@ -98,7 +101,7 @@ for one mechanical turn without persisting.
 propagates can strand a session or block a tool call.
 
 **Decision.** Every hook body is wrapped in `try { } catch { }` and ends with
-`exit 0`. The only intentional block is the hard wrap.
+`exit 0`. The only intentional blocks are the ones guard mode lets you turn on.
 
 **Consequence.** Bugs can be silent. The self-test asserts output shape and
 content rather than relying on exit codes.
@@ -128,14 +131,13 @@ plain PowerShell and run in CI on `windows-latest`.
 
 ## 11. Watch compaction, refuse only the manual one
 
-**Context.** The bundle exists to replace compaction with a handoff, yet it had no
-visibility into compaction at all: no `PreCompact` hook, so a session could
-auto-compact at 300k and nothing recorded it. A tool that cannot see its own
-failure mode is guessing.
+**Context.** The bundle measures sessions, yet it had no visibility into compaction
+at all: no `PreCompact` hook, so a session could auto-compact at 300k and nothing
+recorded it.
 
-**Decision.** Log every compaction with its context size, and refuse the **first**
-manual `/compact` per session once, pointing at `/wrap` + `/clear`. Never block
-automatic compaction.
+**Decision.** Log every compaction with its context size. In guard mode with
+`blockManualCompact` on, refuse the **first** manual `/compact` per session once,
+offering a handoff instead. Never block automatic compaction.
 
 **Consequence.** Auto-compaction stays unblocked because it can be the recovery
 path for a context-limit error: refusing it there surfaces the error and fails the
@@ -202,3 +204,57 @@ silently deleting wiring the user did not ask to remove is worse than a stale
 hook. The portable skill is one more folder to keep aligned with the scripts; the
 `CLAUDE.md` block and `SKILL.md` are the two places where a rules change must be
 mirrored.
+
+## 15. A handoff belongs to one session, or it is not written
+
+**Context.** The handoff was one shared file, and the writer fell back to the newest
+transcript across all projects. Two concurrent sessions could overwrite or consume each
+other's work, and one could pick up a brief about a different project.
+
+**Decision.** The session id, transcript and project are passed explicitly, and each
+handoff is its own file. If the session cannot be identified, the writer reports that
+and stops. A new session takes a handoff only when it is certain whose it is. When
+several could apply, it announces them and injects none.
+
+**Consequence.** A handoff is occasionally not picked up automatically and has to be
+named. That is a nuisance a person can see, and a wrong brief is a mistake they cannot.
+
+## 16. Control state and diagnostics do not share a fate
+
+**Context.** Hooks overlap, and asynchronous ones finish late. A last-writer-wins file let
+a stale update reverse a tier, or clear the flag that stops a one-time prompt repeating.
+
+**Decision.** Tier changes, one-time flags and effort limits are control state, updated
+under a cross-process lock with atomic replacement, and a stale update cannot move them
+backwards. Counters live in a separate diagnostics file, and the late hooks write only
+there. A damaged state file recovers without re-enabling an interruption that has fired.
+
+**Consequence.** Diagnostic counters can undercount under contention, and a hook that
+cannot get the lock in time gives up without acting. Both are the right way round: nothing
+is decided from a counter, and a missed prompt is better than a repeated one.
+
+## 17. Costs are estimates, per request, with their sources shown
+
+**Context.** One rate applied to a whole session gave one precise-looking number that was
+wrong for mixed models, and rates baked into a script go stale without notice.
+
+**Decision.** Each request is priced at its own model from a versioned table that can be
+replaced. An unknown model stays unknown and is counted, so no number is invented for it.
+Every figure is labelled an API-equivalent estimate, which is neither billing nor a
+subscription limit.
+
+**Consequence.** Totals can be partial, and the report says so. The table needs updating
+when prices change, and its version travels with each result.
+
+## 18. Evidence decides what stays
+
+**Context.** Automatic effort routing and compaction blocking both have a maintenance and
+execution cost. Reasoning about them is not a measurement.
+
+**Decision.** `benchmarks/` compares them on equal terms, as separate arms. Nothing is
+claimed until a live run is recorded, and failures are reported beside successes. Blocking
+stays off by default in the meantime, since it interrupts people and has no evidence behind it.
+
+**Consequence.** Routing stays on in assist mode for now because it is existing behaviour,
+not because it has been shown to help. **That question is still open:** see
+[benchmarks/README.md](../benchmarks/README.md).

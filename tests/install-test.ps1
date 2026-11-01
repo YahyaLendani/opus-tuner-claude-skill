@@ -96,7 +96,7 @@ try {
     Check 'leftover claude-skill kept in backups' (@(Get-ChildItem (Join-Path (Join-Path $sandbox 'state') 'opus-tuner-backups') -Directory -Filter 'claude-skill-*' -ErrorAction SilentlyContinue).Count -eq 1)
 
     $s = Read-Settings $sandbox
-    foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionStart', 'PreCompact')) {
+    foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionEnd', 'SessionStart', 'PreCompact')) {
         Check "$ev has exactly one opus-tuner hook" ((Count-Our $s $ev) -eq 1) "count $(Count-Our $s $ev)"
     }
     Check 'PreToolUse not registered without -Enforce' ((Count-Our $s 'PreToolUse') -eq 0)
@@ -203,7 +203,7 @@ try {
     Write-Host 'uninstall' -ForegroundColor Yellow
     & $uninstall | Out-Null
     $s = Read-Settings $sandbox
-    foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionStart', 'PreCompact')) {
+    foreach ($ev in @('UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionEnd', 'SessionStart', 'PreCompact')) {
         Check "$ev has no opus-tuner hook" ((Count-Our $s $ev) -eq 0) "count $(Count-Our $s $ev)"
     }
     Check "user's Stop hook survives uninstall" ((Count-User $s 'Stop' 'mine.ps1') -eq 1)
@@ -250,7 +250,7 @@ try {
     Check 'advisory mode still writes CLAUDE.md' ((Get-Content (Join-Path $advisory 'CLAUDE.md') -Raw) -match 'opus-tuner:begin')
 
     # A skills-only install is a legitimate configuration, not a broken one. The
-    # doctor must say so and exit 0 instead of failing six wiring checks.
+    # doctor must say so and exit 0 instead of failing every wiring check.
     $advDoctor = Join-Path (Join-Path (Join-Path (Join-Path $advisory 'skills') 'opus-tuner') 'scripts') 'doctor.ps1'
     $advOut = (& $Interpreter @ExePrefix -File $advDoctor 2>&1) -join "`n"
     Check 'doctor reports an advisory install as healthy' ($LASTEXITCODE -eq 0 -and $advOut -match 'advisory install') $advOut

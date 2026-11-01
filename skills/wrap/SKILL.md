@@ -1,36 +1,41 @@
 ---
 name: wrap
-description: Write the handoff brief so the session can be cleared and resumed in a fresh context.
+description: Prepare and verify a handoff for this session, so the user can continue in a fresh one.
 ---
 
 # Wrap
 
-Use at a task boundary, or when context is near its ceiling.
+Use at a task boundary, or when the user wants to continue in a fresh session.
 
-1. Run the brief writer — it derives the facts from the transcript, not from memory:
+1. Write the draft. Its facts come from this session's own transcript:
 
    ```
    # Windows
-   powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\brief.ps1"
+   powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_SKILL_DIR}/../opus-tuner/scripts/brief.ps1" -SessionId "${CLAUDE_SESSION_ID}" -Project "<project directory>"
 
    # macOS / Linux
-   pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/brief.ps1"
+   pwsh -NoProfile -File "${CLAUDE_SKILL_DIR}/../opus-tuner/scripts/brief.ps1" -SessionId "${CLAUDE_SESSION_ID}" -Project "<project directory>"
    ```
 
-   If `CLAUDE_CONFIG_DIR` is set, substitute it for `~/.claude` in that path.
+   If it reports that it cannot identify the session, tell the user what it said.
+   Do not write the file by hand or point it at another transcript.
 
-2. Read `.claude/handoff.md` and replace the four placeholder sections:
-   - **Decisions** — what was chosen and why
-   - **Dead ends** — what was tried and failed, so it is not retried
-   - **Unverified assumptions** — believed but not proven
-   - **Next step** — one concrete action
+2. Read the file it names and replace the placeholders. Keep it under ~600 words;
+   a new session receives it verbatim.
+   - **Task goal**: the outcome the user asked for
+   - **User constraints**: rules the user set that still apply
+   - **Decisions**: what was chosen and why
+   - **Unresolved problems**: what is still broken or undecided
+   - **Verification results**: what was actually run and its result, and what was not verified
+   - **Next step**: one concrete action
+   - **Dead ends** (optional): what was tried and failed
 
-   Keep the whole file under ~600 words. It is re-injected verbatim into the new
-   session, so every line costs tokens there.
+   Write `None.` when a required section really has nothing to say.
 
-3. Tell the user, in one line:
+3. Run the same command again with `-Verify` added. It checks the required sections,
+   masks credentials and marks the handoff ready. If it reports anything missing,
+   fix that and run it again.
 
-   > Brief written. Run `/clear` — I will pick up from it automatically.
-
-Do **not** run `/compact` instead. A handoff replaces the conversation at a task
-boundary with no summarization pass; `/compact` costs a full read of the context.
+4. Only after verification passes, ask the user to run `/clear` when they want to
+   continue in a fresh session. Never try to run it yourself. The session that wrote
+   the handoff is the one that picks it up.

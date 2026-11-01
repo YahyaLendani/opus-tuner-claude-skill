@@ -1,0 +1,17 @@
+{
+  "_comment": "Worked out by hand from tests/fixtures/usage/pricing-pinned.json, per million tokens, so a later price update does not move these totals. The 'why' figures are in millionths of a dollar.",
+  "sessions": {
+    "mixedmod": { "requests": 3, "costUSD": 0.05378, "peak": 103000, "unknown": 0, "assumedWrite": 0,   "why": "opus 5.5: 1000x4 + 100000x0.20 + 2000x5 + 500x20 = 44000. haiku 5.5: 2000x0.10 + 8000x0.01 + 1000x0.50 = 780. sonnet 5.5: 500x2 + 20000x0.10 + 1000x4 (1h) + 200x10 = 9000." },
+    "longprmt": { "requests": 2, "costUSD": 0.01675, "peak": 121000, "unknown": 0, "assumedWrite": 0,   "why": "over 100k: 1000x0.50 + 120000x0.05 + 100x2.50 = 6750. exactly 100k stays standard: 100000x0.10 = 10000." },
+    "nestedus": { "requests": 1, "costUSD": 0.00334, "peak": 1310,   "unknown": 0, "assumedWrite": 0,   "why": "top level only: 10x4 + 1000x0.20 + 100x5 + 200x8 + 50x20 = 3340." },
+    "reorderd": { "requests": 1, "costUSD": 0.00075, "peak": 1200,   "unknown": 0, "assumedWrite": 100, "why": "sonnet 5: 100x2 + 1000x0.20 + 100x2.50 (assumed 5m) + 10x10 = 750." },
+    "spacedfd": { "requests": 1, "costUSD": 0.0035,  "peak": 200,    "unknown": 0, "assumedWrite": 0,   "why": "opus 4.8: 200x5 + 100x25 = 3500." },
+    "duplicat": { "requests": 2, "costUSD": 0.0038,  "peak": 1100,   "unknown": 0, "assumedWrite": 0,   "why": "opus 5, once, largest output: 100x5 + 1000x0.50 + 40x25 = 2000. sonnet 4.6, once: 100x3 + 100x15 = 1800." },
+    "dupresum": { "requests": 1, "costUSD": 0.0003,  "peak": 10,     "unknown": 0, "assumedWrite": 0,   "why": "the replayed record belongs to the older file. 10x5 + 10x25 = 300." },
+    "unknownm": { "requests": 4, "costUSD": 0.0024,  "peak": 100000, "unknown": 3, "assumedWrite": 0,   "why": "only opus 5.5 is priced: 100x4 + 100x20 = 2400. peak counts input tokens whatever the price: 100000." },
+    "fastgeos": { "requests": 3, "costUSD": 0.0078,  "peak": 1200,   "unknown": 0, "assumedWrite": 0,   "why": "fast opus 5.5: 100x8 + 1000x0.40 + 100x10 + 10x40 = 2600. sonnet 5.5 us: 1000x2x1.1 = 2200. sonnet 4.5 has no us premium: 1000x3 = 3000." },
+    "provider": { "requests": 3, "costUSD": 0.012,   "peak": 1000,   "unknown": 0, "assumedWrite": 0,   "why": "1000x3 + 1000x5 + 1000x4 = 12000. the truncated line is reported, not priced." },
+    "sidechai": { "requests": 2, "costUSD": 0.0054,  "peak": 100,    "unknown": 0, "assumedWrite": 0,   "why": "both are billed: 100x4 + 5000x1 = 5400. peak is the main thread." }
+  },
+  "totals": { "requests": 23, "costUSD": 0.10982, "unknownRequests": 3, "assumedWrite": 100, "duplicates": 4, "unparsed": 1 }
+}

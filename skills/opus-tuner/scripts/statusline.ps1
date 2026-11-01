@@ -67,10 +67,13 @@ try {
 
     Write-Output ($parts -join " $dim|$rst ")
 
+    # Monitor shows the numbers without suggesting anything.
+    $monitor = ([string]$cfg['mode'] -eq 'monitor')
     if ($pct -ge 100) {
-        Write-Output "$red-> ceiling reached: /wrap then /clear$rst"
-    } elseif ($pct -ge 70) {
-        Write-Output "$yel-> finish this unit, then /wrap$rst"
+        $advice = if ($monitor) { '' } else { ' To continue in a fresh session: /wrap, then /clear' }
+        Write-Output "$red-> ceiling reached.$advice$rst"
+    } elseif ($pct -ge 70 -and -not $monitor) {
+        Write-Output "$yel-> to continue in a fresh session later: /wrap when this unit is done$rst"
     }
 } catch { }
 exit 0

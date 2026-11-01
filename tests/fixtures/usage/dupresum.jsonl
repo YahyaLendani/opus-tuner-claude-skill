@@ -1,0 +1,2 @@
+{"type":"assistant","uuid":"dup-a","requestId":"req_dup1","message":{"id":"msg_dup1","model":"claude-opus-5","usage":{"input_tokens":100,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0,"output_tokens":40}}}
+{"type":"assistant","uuid":"res-1","requestId":"req_res1","message":{"id":"msg_res1","model":"claude-opus-5","usage":{"input_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":10}}}

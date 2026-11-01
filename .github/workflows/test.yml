@@ -1,4 +1,4 @@
-﻿name: test
+name: test
 
 on:
   push:
@@ -67,6 +67,30 @@ jobs:
         shell: powershell
         run: ./tests/install-test.ps1
 
+      - name: Handoff test
+        shell: powershell
+        run: ./tests/handoff-test.ps1 -Interpreter powershell
+
+      - name: State test
+        shell: powershell
+        run: ./tests/state-test.ps1 -Interpreter powershell
+
+      - name: Modes test
+        shell: powershell
+        run: ./tests/modes-test.ps1 -Interpreter powershell
+
+      - name: Usage test
+        shell: powershell
+        run: ./tests/usage-test.ps1 -Interpreter powershell
+
+      - name: Benchmark harness test
+        shell: powershell
+        run: ./tests/benchmark-test.ps1 -Interpreter powershell
+
+      - name: Docs test
+        shell: powershell
+        run: ./tests/docs-test.ps1
+
       # Network, so it reports without blocking: a shields.io outage must not
       # fail a pull request, but a badge stuck on "no releases" should be seen.
       - name: Badges render
@@ -89,6 +113,30 @@ jobs:
       - name: Installer test under pwsh
         shell: pwsh
         run: ./tests/install-test.ps1
+
+      - name: Handoff test under pwsh
+        shell: pwsh
+        run: ./tests/handoff-test.ps1 -Interpreter pwsh
+
+      - name: State test under pwsh
+        shell: pwsh
+        run: ./tests/state-test.ps1 -Interpreter pwsh
+
+      - name: Modes test under pwsh
+        shell: pwsh
+        run: ./tests/modes-test.ps1 -Interpreter pwsh
+
+      - name: Usage test under pwsh
+        shell: pwsh
+        run: ./tests/usage-test.ps1 -Interpreter pwsh
+
+      - name: Benchmark harness test under pwsh
+        shell: pwsh
+        run: ./tests/benchmark-test.ps1 -Interpreter pwsh
+
+      - name: Docs test under pwsh
+        shell: pwsh
+        run: ./tests/docs-test.ps1
 
   posix:
     name: ${{ matrix.os }} (pwsh 7)
@@ -131,6 +179,30 @@ jobs:
       - name: Installer test
         shell: pwsh
         run: ./tests/install-test.ps1
+
+      - name: Handoff test
+        shell: pwsh
+        run: ./tests/handoff-test.ps1 -Interpreter pwsh
+
+      - name: State test
+        shell: pwsh
+        run: ./tests/state-test.ps1 -Interpreter pwsh
+
+      - name: Modes test
+        shell: pwsh
+        run: ./tests/modes-test.ps1 -Interpreter pwsh
+
+      - name: Usage test
+        shell: pwsh
+        run: ./tests/usage-test.ps1 -Interpreter pwsh
+
+      - name: Benchmark harness test
+        shell: pwsh
+        run: ./tests/benchmark-test.ps1 -Interpreter pwsh
+
+      - name: Docs test
+        shell: pwsh
+        run: ./tests/docs-test.ps1
 
       - name: install.sh wrapper (executable, LF, passes switches)
         shell: bash

@@ -1,0 +1,39 @@
+{
+  "_comment": "What differs between arms. Everything else (model, effort, tools, permissions, budgets, tasks) is the same for all of them and set in run.ps1.",
+  "arms": {
+    "default": {
+      "description": "Claude Code with an empty configuration. It keeps going in one session, and native auto-compaction applies.",
+      "continuation": "resume"
+    },
+    "short": {
+      "description": "An empty configuration plus a short CLAUDE.md. No hooks, no skills.",
+      "continuation": "notes",
+      "claudeMd": "short-instructions.md",
+      "handoffPrompt": "I want to continue this in a fresh session. Prepare for that now, as your instructions say.",
+      "freshPrefix": "Continuing from an earlier session. Your notes are in HANDOFF.md in this directory.\n\n"
+    },
+    "tuner": {
+      "description": "opus-tuner installed with its defaults: assist mode, monitoring and advice, no interruptions.",
+      "continuation": "wrap",
+      "tuner": { "mode": "assist" },
+      "handoffPrompt": "/wrap"
+    },
+    "tuner-monitor": {
+      "description": "Optional. opus-tuner in monitor mode, to see the hooks' overhead without their advice. Uses a resume, since monitor mode prepares no handoffs.",
+      "continuation": "resume",
+      "tuner": { "mode": "monitor" }
+    },
+    "tuner-no-routing": {
+      "description": "Optional. Assist mode with the low gear off, to separate automatic effort routing from the rest of the tuner.",
+      "continuation": "wrap",
+      "tuner": { "mode": "assist", "downshift": false },
+      "handoffPrompt": "/wrap"
+    },
+    "tuner-guard": {
+      "description": "Optional. Guard mode with both interruptions on, to measure what compaction blocking and the Stop prompt add.",
+      "continuation": "wrap",
+      "tuner": { "mode": "guard", "hardWrap": true, "blockManualCompact": true },
+      "handoffPrompt": "/wrap"
+    }
+  }
+}

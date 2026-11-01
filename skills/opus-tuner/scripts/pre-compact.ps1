@@ -1,13 +1,11 @@
-# PreCompact hook: compaction is the expensive thing this bundle exists to
-# avoid, so it should at least be visible.
+# PreCompact hook: make compaction visible, and optionally ask once before one.
 #
 # Two jobs:
 #   1. Record every compaction in the decision log. PreCompact discards
 #      systemMessage, so a log row is the only way "how often did it happen"
 #      can be answered later (stats.ps1 counts them).
-#   2. Refuse the first *manual* /compact per session, once. Compaction pays a
-#      full context read, and its summary is then re-read on every later
-#      request; a handoff brief plus /clear starts at ~500 tokens instead.
+#   2. In guard mode with blockManualCompact on, refuse the first *manual*
+#      /compact per session, once, so the user can choose a handoff instead.
 #
 # Automatic compaction is never blocked. If it was triggered to recover from a
 # context-limit error the API already returned, blocking it surfaces that error
@@ -34,35 +32,43 @@ try {
 
     # One row per event, and only one. A refused /compact is not a compaction:
     # logging both would make stats.ps1 count refusals as the thing it measures.
-    $blockManual = $true
-    if ($cfg.ContainsKey('blockManualCompact')) { $blockManual = [bool]$cfg['blockManualCompact'] }
+    $blockManual = Test-Interruption $cfg 'blockManualCompact'
 
     # One shot per session, like the hard wrap. A second /compact means the user
     # heard the reason and still wants it; refusing again would be a trap.
-    $willBlock = ($trigger -eq 'manual' -and $blockManual -and -not [bool]$state['nudged']['compact'])
+    $result = @{ block = $false }
+    if ($trigger -eq 'manual' -and $blockManual) {
+        $saved = Update-State $sid {
+            param($s)
+            if (-not [bool]$s['nudged']['compact']) {
+                $s['nudged']['compact'] = $true
+                $result['block'] = $true
+            }
+        }
+        # Not saved means the flag is not on disk: blocking now could repeat.
+        if (-not $saved) { $result['block'] = $false }
+    }
 
-    if (-not $willBlock) {
+    if (-not $result['block']) {
         Write-Decision $cfg $sid $ctx $tier $gear "compact-$trigger"
         exit 0
     }
 
-    $state['nudged']['compact'] = $true
-    Write-State $sid $state
     Write-Decision $cfg $sid $ctx $tier $gear 'compact-blocked'
 
     $where = if ($ctx -gt 0) {
         if ($ctx -lt $ceiling) {
-            "You are at $(Format-Tokens $ctx), below the $tier ceiling ($(Format-Tokens $ceiling)), so compacting here buys nothing."
+            "Context is at $(Format-Tokens $ctx), below the $tier ceiling ($(Format-Tokens $ceiling))."
         } else {
-            "You are at $(Format-Tokens $ctx), at the $tier ceiling."
+            "Context is at $(Format-Tokens $ctx), at the $tier ceiling."
         }
     } else { '' }
 
     Write-HookJson @{
         decision = 'block'
-        reason   = ("Compaction re-reads the entire context to write a summary, and that summary is then re-read on every later request. " +
-                    "$where Run /wrap to write .claude/handoff.md, then tell the user to /clear - a fresh session starts at about 500 tokens. " +
-                    "This blocks once per session: run /compact again if you still want it.")
+        reason   = ("One-time prompt from the opus-tuner blockManualCompact setting. $where " +
+                    "If the user would rather continue in a fresh session, invoke /wrap to prepare and verify a handoff, then ask them to run /clear. " +
+                    "Otherwise run /compact again: it will not be blocked again this session.")
     }
 } catch { }
 exit 0

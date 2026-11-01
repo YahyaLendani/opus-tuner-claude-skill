@@ -103,7 +103,10 @@ if (-not $ok) {
 
 $dir = Split-Path -Parent $path
 if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-[System.IO.File]::WriteAllText($path, $new, (New-Object System.Text.UTF8Encoding($false)))
+if (-not (Write-AtomicText $path $new)) {
+    Write-Output "Could not write $path; the profile is still $from."
+    exit 1
+}
 
 $cfg = Get-TunerConfig
 if ($from -eq $target) {

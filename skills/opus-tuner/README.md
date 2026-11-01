@@ -29,22 +29,23 @@ the defaults below.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `mode` | `advise` | `off` silences everything, including the brief re-seed; `advise` banners only; `enforce` also refuses bulk reads at the ceiling |
+| `mode` | `assist` | `off` silences everything; `monitor` shows numbers only; `assist` also routes, advises and loads handoffs; `guard` also fires the interruptions below that you turn on. The old names `advise` and `enforce` still work |
 | `routineTokens` | 150000 | routine ceiling |
 | `deepTokens` | 250000 | deep ceiling; `autoCompactWindow` sits above it at 300000 |
 | `graceTokens` | 25000 | band above the routine ceiling where the tier steps up instead of wrapping |
 | `nudgeAt` | 0.7 | fraction of the ceiling for the first warning |
 | `maxTurnsPerSession` | 2 | hard cap on `gear-max` turns |
-| `minCtxForDownshift` | 100000 | below this a gear-down never pays for its extra request |
+| `minCtxForDownshift` | 100000 | below this the router does not ask for a gear-down |
 | `downshiftRequiresBulk` | true | below 200k, bulk wording must justify the extra request |
-| `hardWrap` | true | Stop hook refuses the stop once at the ceiling, forcing the brief |
-| `blockManualCompact` | true | PreCompact refuses the first manual `/compact` per session; auto is never blocked |
+| `hardWrap` | false | guard mode: Stop hook asks once at the ceiling for a handoff if work remains |
+| `blockManualCompact` | false | guard mode: PreCompact refuses the first manual `/compact` per session; auto is never blocked |
 | `logDecisions` | true | one row per decision in `state/tuner/decisions.csv` |
 | `deepPatterns` / `mechanicalPatterns` / `bulkPatterns` | regex | editable classification vocabulary |
 | `weakDeepPatterns` | regex | deep only with a second signal (failure, 3+ files, plan mode, 400+ char prompt) |
 | `bigOutputTokens` / `bigOutputWarnings` | 6000 / 3 | note on one oversized tool result; cap per session |
 | `weeklyDigest` | true | one zero-token summary line per week at session start |
 | `autoTune` | true | switch the low gear off for 14 days when 40%+ of 5+ recent low-gear turns hit a failure |
+| `pricingFile` | (bundled) | another pricing table for `audit.ps1`, in the format of `references/pricing.json` |
 | `downshift` | true | `false` never picks `gear-low` |
 | `profile` | `dev` | `dev` or `creative`; applied after the keys above. See [configuration](../../docs/configuration.md#profiles) |
 | `profiles` | — | per-profile overrides |
@@ -60,39 +61,37 @@ the test suites stay away from a live install.
 |---|---|---|
 | `route.ps1` | UserPromptSubmit | classify, escalate tier, pick gear. Escalate-only. |
 | `post-tool.ps1` | PostToolUse / PostToolUseFailure | counts failures, tracks edited files, writes state only when a signal changed (it runs on every tool call); notes one oversized result, at most `bigOutputWarnings` per session. Matcher covers `Read`, `Grep`, `Glob`, `WebFetch`, MCP tools, the edit tools, and `Bash` **and** `PowerShell` — on Windows the shell tool is `PowerShell`, and missing it latches the repair-loop signal. |
-| `pre-tool.ps1` | PreToolUse (Read) | enforce mode only; refuses unbounded reads at the ceiling |
-| `stop.ps1` | Stop | two-stage banner; blocks the stop once at the ceiling to force the brief |
-| `session-start.ps1` | SessionStart | resets tier; re-seeds from `.claude/handoff.md` on `clear`, or on `startup` when the brief is under 24 h old; warns (via `systemMessage`, 0 model tokens) about a malformed config and the cost of resuming a large session; weekly digest on `startup` |
-| `pre-compact.ps1` | PreCompact | logs every compaction; blocks the first manual `/compact` per session. Auto is never blocked |
-| `brief.ps1` | manual (`/wrap`) | writes `.claude/handoff.md` from transcript facts |
+| `pre-tool.ps1` | PreToolUse (Read) | guard mode only, and registered only with `-Enforce`; refuses unbounded reads at the ceiling |
+| `stop.ps1` | Stop | two-stage banner; in guard mode with `hardWrap`, one handoff prompt at the ceiling |
+| `session-start.ps1` | SessionStart | resets tier; on `clear`, loads the handoff the session claimed; on `startup`, loads the only waiting handoff in this project if the session that wrote it has ended and it is under 24 h old; otherwise only announces it; reports (via `systemMessage`, 0 model tokens) a malformed config and the size of a large resumed session; weekly digest on `startup` |
+| `session-end.ps1` | SessionEnd | marks this session's verified handoff as ended, and on `clear` as claimed |
+| `pre-compact.ps1` | PreCompact | logs every compaction; in guard mode with `blockManualCompact`, blocks the first manual `/compact` per session. Auto is never blocked |
+| `brief.ps1` | manual (`/wrap`) | drafts `state/tuner/handoffs/<session>.md` from this session's transcript; `-Verify` checks the sections and masks credentials |
 | `ctx.ps1` | manual | current context vs ceiling |
 | `profile.ps1` | manual (`/profile`) | swap or set the dev / creative profile; `show` prints it and the note it adds |
-| `audit.ps1` | manual | per-session cache read/write, output, peak context, cost; `-Baseline x.csv` prints deltas |
+| `audit.ps1` | manual | per-session cache read/write, output, peak context, API-equivalent estimate; `-Baseline x.csv` prints deltas |
 | `stats.ps1` | manual | what the tuner decided: actions, context at each, per day |
 | `weekly.ps1` | manual | audit + stats against the newest baseline, written to `state/tuner/weekly-<date>.txt` |
 | `doctor.ps1` | manual | install health check: hook wiring, config validity, skills, script parse, state writable. `-Replay` executes the registered commands too; `-SkillsOnly` (implied when no hooks are registered) reports an advisory install and exits 0 |
 | `statusline.ps1` | status line | live `ctx/ceiling`, tier, effort, 5h and 7d windows |
-| `selftest.ps1` | manual / CI | 88 assertions against a synthetic transcript |
+| `selftest.ps1` | manual / CI | assertions against a synthetic transcript |
 
 `VERSION` sits beside this README and is installed with it. `doctor.ps1` prints
 that number above its sections and reports it as `version` in `-Json`; the
 installer and uninstaller print it in their banner. It is the string to include in
 a bug report.
 
-## Hard wrap
+## One-time Stop prompt
 
-At the ceiling, `stop.ps1` returns `decision: "block"` with a reason that tells
-the model to run `/wrap` and hand back to you. This is the only part of the
-bundle that cannot be ignored, and it is what makes the ceiling a gate instead of
-a suggestion.
-
-Three limits keep it from becoming a trap:
+Only in guard mode with `"hardWrap": true`. At the ceiling, `stop.ps1` returns
+`decision: "block"` with a reason that asks for a handoff if work remains. It is a
+prompt, not a limit: the next stop is allowed and nothing limits the context between
+stops.
 
 - it fires **once per crossing** (`nudged.hardWrap`), and never when
   `stop_hook_active` is set, so a model that ignores the reason can still finish
   the turn;
-- Claude Code caps consecutive continuations at 8 independently of this hook;
-- `"hardWrap": false` restores banner-only behaviour.
+- `"hardWrap": false` keeps the banner without the prompt.
 
 The block never runs `/clear` for you. It cannot — hooks cannot invoke slash
 commands — and clearing a session unattended would throw away work you may still
@@ -100,14 +99,13 @@ be reading.
 
 ## Compaction
 
-Compaction is the failure mode this bundle exists to replace, so it is watched
-rather than ignored. `pre-compact.ps1` receives `trigger: manual|auto` and does
-two things:
+`pre-compact.ps1` receives `trigger: manual|auto` and does two things:
 
 - logs the event (`compact-manual`, `compact-auto`, or `compact-blocked`) with the
   context size, so `stats.ps1` can count how often it happens;
-- refuses the **first** manual `/compact` per session (`nudged.compact`), with a
-  reason that points at `/wrap` then `/clear`. A second `/compact` proceeds.
+- only in guard mode with `"blockManualCompact": true`, refuses the **first** manual
+  `/compact` per session (`nudged.compact`), offering a handoff instead. A second
+  `/compact` proceeds.
 
 Automatic compaction is never blocked. If it fires to recover from a
 context-limit error the API already returned, blocking it surfaces that error and
@@ -130,8 +128,8 @@ powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\
 pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/stats.ps1" -Days 7
 ```
 
-Rows at small context mean a threshold is too low; several `hard-wrap` rows in a
-day mean the ceiling is being treated as a suggestion.
+Rows at small context mean a threshold is too low. `hard-wrap` rows count the Stop
+prompts that fired in guard mode.
 
 ## Model and effort (verified against the 2.1.312 settings schema)
 
@@ -185,12 +183,13 @@ Two differences that matter:
   terminal needs a restart, the panel needs *Developer: Reload Window* (or a
   restart of the extension host), and the Desktop app needs a restart. Then check
   `/hooks` shows `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `Stop`,
-  `SessionStart`, `PreCompact` and `/skills` lists the seven skills for that mode.
+  `SessionStart`, `SessionEnd`, `PreCompact` and `/skills` lists the seven skills for
+  that mode.
 - **New conversations usually start as `startup`, not `clear`.** The panel's
-  new-chat button does not always emit the `/clear` source, so
-  `session-start.ps1` also re-seeds from `.claude/handoff.md` on `startup` when
-  the brief is under 24 hours old. A stale brief is ignored rather than
-  resurrecting finished work.
+  new-chat button does not always emit the `/clear` source, so `session-start.ps1`
+  also loads a handoff on `startup` when it is the only one waiting in this project,
+  under 24 hours old, and the session that wrote it has ended. Anything less certain
+  is announced, not loaded, since it may belong to another session.
 
 A fresh conversation with no brief is the safest moment to change model or
 effort; that is what `SessionStart` does, and it is why nothing in this bundle
@@ -214,8 +213,9 @@ hook is **~440–490 ms** end to end. Almost none of that is the tuner's own wor
 | first file read and regex use (the transcript tail) | ~100 ms |
 | state read/write, classification, decision append | ~30 ms |
 
-Once those engines are warm, the tuner's own work is ~20 ms: the same 512 KB tail
-read costs 9 ms on the second call inside one process, and `Find-LastUsage` 1 ms.
+Once those engines are warm, the tuner's own work is ~20 ms: `Get-ContextInfo` took
+3–14 ms a call on a 12 MB transcript, tail read and parsed record included, and
+~120 ms on the first call in a process, which is the warm-up in the table above.
 The rest is one-time warm-up that every PowerShell hook pays, and it cannot be
 avoided without a long-lived hook process, which Claude Code does not offer. This
 is also why the two JSON parses are not worth merging: parsing the config first
@@ -225,7 +225,7 @@ Where it lands:
 
 | Hook | Blocking? | Measured | Frequency |
 |---|---|---|---|
-| `route.ps1` | yes | ~450–490 ms | once per prompt |
+| `route.ps1` | yes | ~450–560 ms | once per prompt |
 | `stop.ps1` | yes | ~440–460 ms | once per response |
 | `statusline.ps1` | UI only | ~330–360 ms | per message |
 | `post-tool.ps1` | **no** (`async: true`) | ~310–360 ms | per tool call |
@@ -258,11 +258,11 @@ This is a Windows measurement and says nothing about macOS or Linux, where `pwsh
 is the only option and the same ~150 ms startup floor applies. See
 [docs/platforms.md](../../docs/platforms.md).
 
-## Enforce mode
+## Read guard
 
-`mode: "enforce"` only takes effect once the `PreToolUse` hook is registered,
-which is disabled by default because it costs another blocking invocation on
-every `Read`. Register it with:
+The guard only takes effect in guard mode, once the `PreToolUse` hook is registered,
+which it is not by default because it costs another blocking invocation on every
+`Read`. Register it with:
 
 ```powershell
 # Windows
@@ -274,7 +274,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
 ./install.sh -Force -Enforce
 ```
 
-Then set `"mode": "enforce"` in `tuner.config.json`.
+Then set `"mode": "guard"` in `tuner.config.json`.
 
 ## Removing it
 

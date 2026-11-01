@@ -13,7 +13,7 @@ If `CLAUDE_CONFIG_DIR` is set, the file is read from `$CLAUDE_CONFIG_DIR` instea
 
 ```json
 {
-  "mode": "advise",
+  "mode": "assist",
   "routineTokens": 150000,
   "deepTokens": 250000,
   "graceTokens": 25000,
@@ -21,8 +21,8 @@ If `CLAUDE_CONFIG_DIR` is set, the file is read from `$CLAUDE_CONFIG_DIR` instea
   "maxTurnsPerSession": 2,
   "minCtxForDownshift": 100000,
   "downshiftRequiresBulk": true,
-  "hardWrap": true,
-  "blockManualCompact": true,
+  "hardWrap": false,
+  "blockManualCompact": false,
   "logDecisions": true,
   "deepPatterns": "refactor|architect|root cause|race condition|deadlock|migrat|redesign|flaky|intermittent|memory leak|concurren|thread-safe|vulnerab|rewrite|overhaul|regression",
   "weakDeepPatterns": "why does|why is|why did|investigate|prove|optimi[sz]|performance",
@@ -30,6 +30,7 @@ If `CLAUDE_CONFIG_DIR` is set, the file is read from `$CLAUDE_CONFIG_DIR` instea
   "bigOutputWarnings": 3,
   "weeklyDigest": true,
   "autoTune": true,
+  "pricingFile": "",
   "mechanicalPatterns": "rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license",
   "bulkPatterns": "\\ball\\b|every|across|each file|multiple files|whole repo|whole project|codebase|batch|bulk|throughout"
 }
@@ -42,19 +43,70 @@ session.
 
 | Value | Behaviour |
 |---|---|
-| `advise` (default) | Banners and injected guidance only. Nothing is ever denied. |
-| `enforce` | Adds the `PreToolUse` read guard **if it is registered**. |
-| `off` | Every hook exits immediately, including the brief re-seed. |
+| `off` | Every hook exits immediately, including handoff loading. |
+| `monitor` | Shows context and usage to you. Adds nothing to the model's context, changes no tier or gear, loads no handoff. |
+| `assist` (default) | Monitor, plus tier and gear routing, notes to the model, and handoff preparation and loading. Never interrupts. |
+| `guard` | Assist, plus only the interruptions you turn on below. |
 
-`enforce` is two switches: the config value and the hook registration. Register
-the hook once:
+`advise` and `enforce` are the old names from before 0.7, and still work: `advise`
+acts as `assist`, and `enforce` acts as `guard` with both interruption keys on unless
+you set them. An unknown mode acts as `assist`, and a note at session start says so.
+
+## What can interrupt a session
+
+By default, nothing: `hardWrap` and `blockManualCompact` both default to `false`. In
+guard mode these can, each only when you turn it on:
+
+| Event | When it blocks | Turn it on | How to turn it off |
+|---|---|---|---|
+| `Stop` | Once per ceiling crossing, when the context is at the tier ceiling and past the grace band. | `"hardWrap": true` | `"hardWrap": false`, or leave guard mode |
+| `PreCompact`, manual `/compact` only | The first one per session. Running it again proceeds. | `"blockManualCompact": true` | `"blockManualCompact": false`, or leave guard mode |
+| `PreToolUse`, `Read` only | Each `Read` at the ceiling with no `limit`, or above 400 lines. | Install with `-Enforce` | Re-run the installer without it after leaving guard mode, or leave guard mode |
+
+These never block, in any mode:
+
+- Automatic compaction. If it fires to recover from a context-limit error, blocking
+  it would surface that error and fail the request.
+- `/clear`. No hook can stop it, and no hook or skill runs it. It is always your
+  command.
+- Anything else: prompts, tool calls other than the `Read` above, session start.
+
+The `Stop` block is a one-time handoff prompt, not a context limit. It refuses one
+stop and hands the model a reason: if work remains, prepare and verify a handoff and
+ask you to run `/clear`; if the work is done, say so. The next stop is allowed, and
+nothing limits the context between stops.
+
+The `PreCompact` block gives you the choice of a handoff first. Every compaction is
+recorded in the decision log either way (`compact-manual`, `compact-auto`,
+`compact-blocked`). A refused `/compact` is logged as `compact-blocked` **instead of**
+`compact-manual`, so a refusal never inflates the count.
+
+Keys must be a JSON `true` or `false`. A string such as `"true"` counts as off, and
+`doctor.ps1` flags it. `doctor.ps1` also reports which interruptions are active, and
+notes a key that has no effect outside guard mode.
+
+The `Read` guard costs one extra blocking PowerShell invocation per `Read`, so it
+takes both the mode and a separate registration:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
 ```
 
-The guard costs one extra blocking PowerShell invocation per `Read`, so it is off
-by default even in `enforce` mode.
+### Upgrading from before 0.7
+
+Both interruptions used to be on by default. The installer keeps what you chose and
+explains what changed:
+
+- `enforce` becomes `guard` with both keys written out, unless you had set one.
+- A config that set a key to `true` moves to `guard`, since that is now the only mode
+  where it works. A key you never set stays off, and the installer says how to keep
+  it.
+- A config that chose neither gets the new default, and the installer says how to
+  have the old behaviour back:
+  `"mode": "guard", "hardWrap": true, "blockManualCompact": true`.
+- `off`, `monitor`, `assist` and `guard` are never rewritten.
+
+The original is saved next to it as `tuner.config.json.bak-<time>`.
 
 ## Ceilings
 
@@ -64,9 +116,9 @@ by default even in `enforce` mode.
 | `deepTokens` | 250000 | the ceiling after an escalation |
 | `graceTokens` | 25000 | how far past routine a session may run before it is asked to wrap |
 
-`deepTokens` must stay below Claude Code's `autoCompactWindow` (300000 in the
-installed settings). Otherwise the auto-compactor fires before the handoff does,
-which is the outcome this bundle exists to avoid.
+`deepTokens` should stay below Claude Code's `autoCompactWindow` (300000 in the
+installed settings). Otherwise auto-compaction fires before the ceiling is reached,
+and the ceiling notes never appear.
 
 **How to choose.** Look at `audit.ps1 -Recent 20` and find your median `PeakCtxK`.
 If most sessions peak below 120k, the routine ceiling is not binding and you can
@@ -75,43 +127,9 @@ the one that fires most often. Raise `deepTokens` only if legitimate deep work i
 being interrupted.
 
 **The grace band is not a second ceiling.** Between `routineTokens` and
-`routineTokens + graceTokens`, the tier steps up to deep instead of asking for a
-wrap. That prevents cutting a nearly-finished task at the line. Beyond the band,
-the ceiling wins and the hard wrap applies.
-
-## Hard wrap
-
-| Key | Default | Effect |
-|---|---|---|
-| `hardWrap` | `true` | the Stop hook returns `decision: "block"` once at the ceiling |
-
-The block fires at most once per crossing and never when `stop_hook_active` is
-set. Set it to `false` to keep the banner without ever refusing a stop.
-
-The block does not clear your session. It asks the model to run `/wrap`; pressing
-`/clear` remains your action.
-
-## Compaction
-
-| Key | Default | Effect |
-|---|---|---|
-| `blockManualCompact` | `true` | refuse the first manual `/compact` per session |
-
-The bundle's argument is that a handoff plus `/clear` beats `/compact`: compaction
-pays a full context read to write a summary, and that summary is then re-read on
-every later request. So the first `/compact` in a session is refused once, with a
-reason that points at `/wrap` and `/clear`. Running `/compact` again proceeds —
-a nudge, not a wall.
-
-Auto-compaction is **never** blocked. When it fires to recover from a
-context-limit error the API already returned, blocking it surfaces that error and
-fails the request. Every compaction, manual or auto, is still recorded in the
-decision log (`compact-manual`, `compact-auto`, `compact-blocked`), so `stats.ps1`
-can tell you how often the thing this bundle exists to avoid actually happens. A
-refused `/compact` is logged as `compact-blocked` **instead of** `compact-manual`:
-one row per event, so a refusal never inflates the count.
-
-`"blockManualCompact": false` keeps the logging and drops the block.
+`routineTokens + graceTokens`, the tier steps up to deep instead of showing a
+ceiling note. That prevents a note on a nearly-finished task at the line. Beyond the
+band, the ceiling applies.
 
 ## Gear routing
 
@@ -179,14 +197,15 @@ e2e" — rather than editing the scripts. Keep the lists short: every alternativ
 is matched on every prompt, and a false positive costs a tier for the rest of the
 session.
 
-## Automatic savings
+## Small automatic behaviours
 
 | Key | Default | Effect |
 |---|---|---|
 | `bigOutputTokens` | 6000 | a single tool result at least this large (estimated at 4 characters per token) gets a one-line note on how to bound the next one; `0` turns it off |
 | `bigOutputWarnings` | 3 | most notes per session, so a session that needs big outputs is not nagged |
-| `weeklyDigest` | `true` | once every 7 days, the first fresh session start shows one line: gear switches and their re-read cost, escalations, hard wraps, compactions |
+| `weeklyDigest` | `true` | once every 7 days, the first fresh session start shows one line: gear switches and what they re-read, escalations, Stop prompts, compactions |
 | `autoTune` | `true` | switch the low gear off for 14 days when it keeps causing failures (below) |
+| `pricingFile` | `""` | another pricing table for `audit.ps1`, in the format of `references/pricing.json`. Empty uses the bundled one. A path that does not work gives no cost figure rather than different prices ([measuring.md](measuring.md)) |
 
 The output note covers `Bash`, `PowerShell`, `Read`, `Grep`, `Glob`, `WebFetch`
 and MCP tools. Edit results are skipped: they echo the original file, which the
@@ -202,7 +221,7 @@ context once; `weekly.ps1` has the full report.
 `low-ok` or `low-failed` (a tool failure during it). On a fresh start or
 `/clear`, if at least 5 such turns in the last 14 days were logged and 40% or more
 failed, the router stops choosing `gear-low` for 14 days, and you are told once,
-at zero tokens. Low effort that causes rework costs more than it saves, and
+at zero tokens. A failure during a low-gear turn is a sign of rework, and
 falling back to the default gear keeps the model at full strength. It never
 lowers a ceiling or picks a weaker gear on its own. The override lives in
 `state/tuner/autotune.json`; delete it to undo early, or set `"autoTune": false`.
@@ -248,7 +267,7 @@ output, including `version`, `advisory` and `skipped`. `-Root <dir>` checks a
 different config dir.
 
 Add `-Replay` to execute each registered command exactly as written, in a
-throwaway config dir: six events, exit 0, and empty-or-valid-JSON output. It adds
+throwaway config dir: every event, exit 0, and empty-or-valid-JSON output. It adds
 about 3 seconds and catches what registration alone cannot — a quoting error in
 the command string, a shell that cannot start the interpreter, or a hook that
 writes non-JSON to stdout.

@@ -30,8 +30,8 @@
 1. **Reload.** Claude Code reads hook configuration at session start. Restart it,
    or use *Developer: Reload Window* in VS Code.
 2. Check `/hooks`. You should see `UserPromptSubmit`, `PostToolUse`,
-   `PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact` (and `PreToolUse`
-   only with `-Enforce`).
+   `PostToolUseFailure`, `Stop`, `SessionStart`, `SessionEnd`, `PreCompact` (and
+   `PreToolUse` only with `-Enforce`).
 3. Confirm the paths in `~/.claude/settings.json` exist. The installer writes
    absolute paths; moving `~/.claude` or restoring settings from another machine
    breaks them. Re-run `install.ps1 -Force`.
@@ -45,13 +45,13 @@ If the file does not exist, `SessionStart` did not run.
 ## The doctor says "advisory install"
 
 That is not a failure. It means no opus-tuner hooks are registered in the config
-dir the doctor inspected, so the six wiring checks are skipped and the skills,
+dir the doctor inspected, so the hook wiring checks are skipped and the skills,
 config and scripts are validated on their own. Exit code is 0.
 
 Two things it can mean:
 
 - **You installed with `-NoHooks`**, or copied the skills into a project by hand.
-  Nothing automatic runs: no ceilings, no `/compact` refusal, no handoff nudges.
+  Nothing automatic runs: no ceilings, no interruptions, no handoff notes.
   The skills still work when you invoke them. Run `install.ps1 -Force` to add the
   hooks.
 - **The doctor is checking the wrong tree.** It checks the copy it belongs to: run
@@ -121,32 +121,42 @@ It could not find a usage block in the transcript tail. Common causes:
 
 Pass `-Transcript <path>` to point at a specific file.
 
-## The hard wrap fired and I did not want it
+## The Stop prompt fired and I did not want it
 
-It fires once per ceiling crossing. If a task genuinely needs more room:
+It only fires in guard mode with `"hardWrap": true`, once per ceiling crossing. To
+stop it:
 
+- set `"hardWrap": false`, or leave guard mode, to keep the banner without the
+  prompt, or
 - raise `deepTokens`, or
 - start the session in the deep tier by escalating it early (plan mode or a deep
-  prompt does this), or
-- set `"hardWrap": false` to keep the banner without the block.
+  prompt does this).
 
-If it appears to fire repeatedly, check that the state directory is writable.
-Without a persisted `nudged.hardWrap`, each stop looks like the first one.
+It should not repeat, even when the state directory is not writable or the state
+file is damaged: a hook that cannot save the flag does not fire. If you see it twice
+for one crossing, that is a bug worth reporting with the `doctor.ps1` output.
+[What can interrupt a session](configuration.md#what-can-interrupt-a-session) lists
+everything that can.
+
+## `/compact` was refused
+
+Same setting family: guard mode with `"blockManualCompact": true`. Run `/compact`
+again and it proceeds, or set the key to `false`. Automatic compaction is never
+refused.
 
 ## I still hit the weekly limit
 
-This bundle reduces waste; it does not raise your plan's limits. If you are at
-the limit, the useful questions are:
+This bundle shows where tokens go; it does not raise your plan's limits. If you are
+at the limit, the useful questions are:
 
-- What is `PeakCtxK` on your largest sessions? Long sessions that never wrap are
-  the usual cause.
-- How many sessions run past the deep ceiling? `stats.ps1` shows `hard-wrap`
-  rows.
-- Are you wrapping at task boundaries, or compacting and continuing? A fresh
-  context is cheaper than a summary of a large one.
+- What is `PeakCtxK` on your largest sessions?
+- How many sessions run past the deep ceiling? `stats.ps1` shows `ceiling` and, in
+  guard mode, `hard-wrap` rows.
+- How do your long sessions continue: a handoff, compaction, or neither? The audit
+  shows what each one re-read afterward.
 
-Check `/usage` for the authoritative numbers; `audit.ps1` estimates the same
-shape from transcripts.
+Check `/usage` for the authoritative numbers. `audit.ps1` is an API-equivalent
+estimate from transcripts, not your bill or your subscription limit.
 
 ## `settings.json` is invalid
 
@@ -168,8 +178,9 @@ next to the skill.
   deliberate. Delete them when you are satisfied.
 - `-Purge` removes `tuner.config.json` and `state/tuner`, including the decision
   log.
-- Project handoff briefs live in `<project>/.claude/handoff.md`. They are project
-  files, not part of the install, and uninstall does not touch them.
+- A `<project>/.claude/handoff.md` left by an older version is a project file, not
+  part of the install, and uninstall does not touch it. Handoffs now live in
+  `state/tuner/handoffs`, which `-Purge` removes.
 
 ## macOS and Linux
 

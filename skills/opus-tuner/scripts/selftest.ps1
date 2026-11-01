@@ -234,7 +234,7 @@ Check 'successful PowerShell call clears the counter' ([int]$st['fails'] -eq 0) 
 # This hook runs on every tool call, so a call that changes no signal must not
 # rewrite the state file. A failed assertion here means needless disk churn on
 # every Read and Grep.
-$statePath = Get-StatePath $sid3
+$statePath = Get-DiagPath $sid3
 $mtBefore = (Get-Item -LiteralPath $statePath).LastWriteTimeUtc
 Start-Sleep -Milliseconds 25
 $readEvt = (@{ session_id = $sid3; cwd = $sandbox; hook_event_name = 'PostToolUse'; tool_name = 'Read'; tool_input = @{ file_path = 'C:\x\a.ts' } } | ConvertTo-Json -Compress)
@@ -261,10 +261,19 @@ $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $large '' 'default' 'Stop')
 Check 'grace escalates instead of blocking' ($r.text -match 'escalated' -and $r.text -notmatch 'decision') $r.text
 
 $sid = New-Sid
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
+Check 'by default the ceiling only shows the banner' ($r.text -notmatch '"decision"' -and $r.text -match 'systemMessage') $r.text
+
+# Interruptions are opt-in: guard mode plus the key for each one.
+$guardCfg = Join-Path $sandbox 'guard.json'
+[System.IO.File]::WriteAllText($guardCfg, '{"mode":"guard","hardWrap":true,"blockManualCompact":true}', (New-Object System.Text.UTF8Encoding($false)))
+$env:OPUS_TUNER_CONFIG = $guardCfg
+
+$sid = New-Sid
 Invoke-Hook 'route.ps1' (New-Payload $sid $large 'carry on') | Out-Null
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
 [void]$timings.Add([pscustomobject]@{ name = 'stop'; ms = $r.ms })
-Check 'ceiling blocks the stop' ($r.text -match '"decision":"block"') $r.text
+Check 'guard with hardWrap blocks the stop at the ceiling' ($r.text -match '"decision":"block"') $r.text
 Check 'block reason names /wrap and /clear' ($r.text -match '/wrap' -and $r.text -match '/clear') $r.text
 
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
@@ -281,12 +290,14 @@ Invoke-Hook 'route.ps1' (New-Payload $sid $over 'carry on') | Out-Null
 Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop') | Out-Null
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
 Check 'ceiling seen by the router still shows the stop banner' ($r.text -match 'systemMessage' -and $r.text -match '/wrap') $r.text
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 
-# A config with hardWrap off must fall back to the old banner-only behaviour.
+# A config with hardWrap off must fall back to the banner-only behaviour.
 $noHard = Join-Path $sandbox 'nohard.json'
 # Fixtures come from the built-in defaults, never from a live install, so this
 # suite runs identically on a developer machine and in CI.
 $c = Get-TunerConfig -Defaults
+$c.mode = 'guard'
 $c.hardWrap = $false
 $c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $noHard -Encoding UTF8
 $env:OPUS_TUNER_CONFIG = $noHard
@@ -309,11 +320,16 @@ $sid = New-Sid
 $r = Invoke-Hook 'pre-compact.ps1' (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'auto' } | ConvertTo-Json -Compress)
 Check 'auto compaction is never blocked' ($r.text.Length -eq 0) $r.text
 
-# Manual compaction is pure waste below the ceiling, so it is refused once.
+$sid = New-Sid
+$r = Invoke-Hook 'pre-compact.ps1' (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'manual' } | ConvertTo-Json -Compress)
+Check 'by default a manual /compact is allowed' ($r.text.Length -eq 0) $r.text
+
+# In guard mode with the key on, the first manual compaction is refused once.
+$env:OPUS_TUNER_CONFIG = $guardCfg
 $sid = New-Sid
 $manual = (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'manual' } | ConvertTo-Json -Compress)
 $r = Invoke-Hook 'pre-compact.ps1' $manual
-Check 'first manual /compact is blocked' ($r.text -match '"decision":"block"') $r.text
+Check 'first manual /compact is blocked in guard mode' ($r.text -match '"decision":"block"') $r.text
 Check 'compact reason names /wrap and /clear' ($r.text -match '/wrap' -and $r.text -match '/clear') $r.text
 
 # A refusal is not a compaction. One row, action=compact-blocked: otherwise
@@ -324,9 +340,11 @@ Check 'blocked /compact logs one blocked row' (@($mine | Where-Object { $_.actio
 
 $r = Invoke-Hook 'pre-compact.ps1' $manual
 Check 'second manual /compact is allowed' ($r.text.Length -eq 0) $r.text
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 
 $noBlock = Join-Path $sandbox 'noblock.json'
 $c = Get-TunerConfig -Defaults
+$c.mode = 'guard'
 $c.blockManualCompact = $false
 $c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $noBlock -Encoding UTF8
 $env:OPUS_TUNER_CONFIG = $noBlock
@@ -337,51 +355,75 @@ Check 'blockManualCompact off only logs' ($r.text.Length -eq 0) $r.text
 
 # ---------- 6. enforcement ----------
 Write-Host ''
-Write-Host 'enforcement (mode=advise)' -ForegroundColor Yellow
+Write-Host 'read guard' -ForegroundColor Yellow
 
 $sid = New-Sid
-$read = (@{ session_id = $sid; cwd = $sandbox; transcript_path = $large; hook_event_name = 'PreToolUse'; tool_name = 'Read'; tool_input = @{ file_path = 'C:\big.ts' } } | ConvertTo-Json -Compress)
+$read = (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreToolUse'; tool_name = 'Read'; tool_input = @{ file_path = 'C:\big.ts' } } | ConvertTo-Json -Compress)
 $r = Invoke-Hook 'pre-tool.ps1' $read
-Check 'advise mode never blocks a read' ($r.text.Length -eq 0) $r.text
+Check 'assist mode never blocks a read' ($r.text.Length -eq 0) $r.text
+
+$env:OPUS_TUNER_CONFIG = $guardCfg
+$r = Invoke-Hook 'pre-tool.ps1' $read
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
+Check 'guard mode denies a bulk read at the ceiling' ($r.text -match '"permissionDecision":"deny"') $r.text
 
 # ---------- 6. handoff ----------
 Write-Host ''
 Write-Host 'handoff round trip' -ForegroundColor Yellow
 
-$briefOut = (& $Interpreter @ExePrefix -File (Join-Path $here 'brief.ps1') -Cwd $sandbox -Transcript $large) -join "`n"
-$briefPath = Join-Path (Join-Path $sandbox '.claude') 'handoff.md'
-Check 'brief.ps1 writes .claude/handoff.md' (Test-Path $briefPath) $briefOut
-if (Test-Path $briefPath) {
-    $t = Get-Content $briefPath -Raw
-    Check 'brief has all required sections' (
-        $t -match '## Decisions' -and $t -match '## Dead ends' -and
-        $t -match '## Unverified assumptions' -and $t -match '## Next step')
+# tests/handoff-test.ps1 holds the full contract: identity, concurrent sessions,
+# secrets. This is the round trip through the scripts under test.
+function New-ReadyHandoff {
+    param([string]$Text)
+    $id = New-Sid
+    $tr = Join-Path $sandbox "$id.jsonl"
+    Copy-Item -LiteralPath $large -Destination $tr
+    $draftOut = (& $Interpreter @ExePrefix -File (Join-Path $here 'brief.ps1') -SessionId $id -Transcript $tr -Project $sandbox) -join "`n"
+    $path = Get-HandoffPath $id
+    $draft = ''
+    if (Test-Path -LiteralPath $path) { $draft = Get-Content -LiteralPath $path -Raw -Encoding UTF8 }
+    [System.IO.File]::WriteAllText($path, ([regex]::Replace($draft, '_\(fill:[^\n]*\)_', $Text)), (New-Object System.Text.UTF8Encoding($false)))
+    $verifyOut = (& $Interpreter @ExePrefix -File (Join-Path $here 'brief.ps1') -SessionId $id -Verify) -join "`n"
+    $verifyCode = $LASTEXITCODE
+    return @{ id = $id; path = $path; draft = $draft; draftOut = $draftOut; verifyOut = $verifyOut; verifyCode = $verifyCode }
 }
 
+$h = New-ReadyHandoff 'run the tests'
+Check 'brief.ps1 writes a handoff for its session' ($h.draft -match "(?m)^session_id: $($h.id)\s*$") $h.draftOut
+Check 'brief has all required sections' (
+    $h.draft -match '## Task goal' -and $h.draft -match '## User constraints' -and
+    $h.draft -match '## Decisions' -and $h.draft -match '## Unresolved problems' -and
+    $h.draft -match '## Verification results' -and $h.draft -match '## Next step')
+Check 'a filled handoff verifies' ($h.verifyCode -eq 0) $h.verifyOut
+Check 'verification asks the user to run /clear' ($h.verifyOut -match '/clear') $h.verifyOut
+
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'clear'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'clear re-seeds from the brief' ($r.text -match 'Resuming from a handoff') $r.text.Substring(0, [Math]::Min(120, $r.text.Length))
-Check 'brief consumed after re-seed' (-not (Test-Path $briefPath) -and (Test-Path (Join-Path (Join-Path $sandbox '.claude') 'handoff.consumed.md')))
+Check 'brief consumed after re-seed' (-not (Test-Path $h.path) -and (Test-Path (Join-Path (Join-Path (Get-HandoffDir) 'consumed') (Split-Path -Leaf $h.path))))
 
 # The VS Code panel often starts a new conversation as 'startup', not 'clear'.
-Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nrun the tests" -Encoding UTF8
+$h = New-ReadyHandoff 'run the tests'
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'other'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'fresh startup re-seeds (VS Code new chat)' ($r.text -match 'Resuming from a handoff') $r.text
-Check 'startup consumes the brief' (-not (Test-Path $briefPath))
+Check 'startup consumes the brief' (-not (Test-Path $h.path))
 
-Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nstale work" -Encoding UTF8
-(Get-Item -LiteralPath $briefPath).LastWriteTime = (Get-Date).AddDays(-3)
+$h = New-ReadyHandoff 'stale work'
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'other'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
+(Get-Item -LiteralPath $h.path).LastWriteTime = (Get-Date).AddDays(-3)
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
-Check 'stale startup brief is ignored' ($r.text.Length -eq 0 -and (Test-Path $briefPath)) $r.text
-Remove-Item -LiteralPath $briefPath -Force
+Check 'stale startup brief is ignored' ($r.text.Length -eq 0 -and (Test-Path $h.path)) $r.text
+Remove-Item -LiteralPath $h.path -Force
 
-Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nresume work" -Encoding UTF8
+$h = New-ReadyHandoff 'resume work'
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'resume'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'resume does not inject the brief' ($r.text.Length -eq 0)
-Remove-Item -LiteralPath $briefPath -Force
+Remove-Item -LiteralPath $h.path -Force
 
 # Resuming pays before the first new token. The warning must ride on
 # systemMessage (free) rather than additionalContext (billed on every turn).
@@ -417,13 +459,20 @@ $offCfg = Join-Path $sandbox 'off.json'
 $c = Get-TunerConfig -Defaults
 $c.mode = 'off'
 $c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $offCfg -Encoding UTF8
-Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nshould not load" -Encoding UTF8
+$h = New-ReadyHandoff 'should not load'
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'clear'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
 $env:OPUS_TUNER_CONFIG = $offCfg
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 $env:OPUS_TUNER_CONFIG = $script:BaseConfig
-Check 'mode off silences session start' ($r.text.Length -eq 0 -and (Test-Path $briefPath)) $r.text
-Remove-Item -LiteralPath $briefPath -Force -ErrorAction SilentlyContinue
+Check 'mode off silences session start' ($r.text.Length -eq 0 -and (Test-Path $h.path)) $r.text
+Remove-HandoffMarkers $h.id
+
+$env:OPUS_TUNER_CONFIG = $offCfg
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'clear'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
+Check 'mode off leaves no pickup marker' (-not (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($h.path, 'claim'))))
+Remove-Item -LiteralPath $h.path -Force -ErrorAction SilentlyContinue
 
 # Regression: a compaction resets the session, and used to re-arm the
 # once-per-session limits along with it.
@@ -439,7 +488,7 @@ $env:OPUS_TUNER_CONFIG = $offCfg
 $sid = New-Sid
 Invoke-Hook 'post-tool.ps1' (@{ session_id = $sid; cwd = $sandbox; hook_event_name = 'PostToolUseFailure'; tool_name = 'Bash'; tool_input = @{ command = 'x' }; error = 'Exit code 1' } | ConvertTo-Json -Compress) | Out-Null
 $env:OPUS_TUNER_CONFIG = $script:BaseConfig
-Check 'mode off writes no state from tool calls' (-not (Test-Path -LiteralPath (Get-StatePath $sid)))
+Check 'mode off writes no state from tool calls' (-not (Test-Path -LiteralPath (Get-StatePath $sid)) -and -not (Test-Path -LiteralPath (Get-DiagPath $sid)))
 
 # ---------- profiles ----------
 Write-Host ''

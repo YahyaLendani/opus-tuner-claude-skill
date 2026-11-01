@@ -1,0 +1,27 @@
+{
+  "id": "record-sweep",
+  "title": "Reads enough to pass the routine ceiling, then acts on what it found",
+  "steps": [
+    {
+      "id": "phase1",
+      "kind": "work",
+      "prompt": "data/ holds 40 record files. Read every file in full with the Read tool, one at a time. Do not use search tools or scripts for this, because I want each file read.\n\nWrite findings.md listing each record whose status is HOLD and whose owner is '-', one id per line, sorted ascending. Do not edit anything under data/ yet.\n\nWe decided that records with a missing owner go to the owner 'triage'. I will ask you to apply that next."
+    },
+    { "kind": "continuation" },
+    {
+      "id": "recall",
+      "kind": "recall",
+      "prompt": "Before continuing: from what you already know, without opening any project file other than your own notes, state the owner we decided on, how many records you found, what order findings.md is in, and what comes next.",
+      "facts": [
+        { "id": "owner-triage", "pattern": "(?i)triage", "sample": "They go to the owner triage." },
+        { "id": "sorted", "pattern": "(?i)sorted|ascending", "sample": "findings.md is sorted ascending." },
+        { "id": "not-edited", "pattern": "(?i)data[/\\\\]?[^.]*(not|n't|un)[^.]*(edit|chang|touch)|(not|n't|un)[^.]*(edit|chang|touch)[^.]*data|apply", "sample": "Next is to apply it, since data/ is not edited yet." }
+      ]
+    },
+    {
+      "id": "phase2",
+      "kind": "work",
+      "prompt": "Apply the decision to every record in findings.md, changing only those records' owner and leaving every other line exactly as it is. Then add a last line to findings.md: done: <the number of records changed>."
+    }
+  ]
+}
