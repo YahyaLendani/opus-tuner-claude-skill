@@ -9,9 +9,9 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1 -Purge
 #   powershell -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1 -DryRun
 #
-# -Purge also deletes tuner.config.json and state/tuner (session state and the
-# decision log). Project handoff briefs live in <project>/.claude/handoff.md and
-# are never touched.
+# -Purge also deletes tuner.config.json and state/tuner (session state, handoffs
+# and the decision log). A <project>/.claude/handoff.md left by an older version
+# is never touched.
 
 [CmdletBinding()]
 param(

@@ -119,7 +119,9 @@ function Invoke-RegisteredHook {
     $errFile = Join-Path $ConfigDir ("replay-$Event.err")
 
     $prev = $env:CLAUDE_CONFIG_DIR
+    $prevState = $env:OPUS_TUNER_STATE
     $env:CLAUDE_CONFIG_DIR = $ConfigDir
+    $env:OPUS_TUNER_STATE = Join-Path (Join-Path $ConfigDir 'state') 'tuner'
     try {
         if ($script:OnWindows -and $shell -ne 'bash') {
             $out = $Payload | & powershell -NoProfile -ExecutionPolicy Bypass -Command $cmd 2> $errFile
@@ -135,6 +137,7 @@ function Invoke-RegisteredHook {
         return @{ ran = $false; detail = $_.Exception.Message }
     } finally {
         $env:CLAUDE_CONFIG_DIR = $prev
+        $env:OPUS_TUNER_STATE = $prevState
     }
 }
 
@@ -143,6 +146,7 @@ $expected = [ordered]@{
     PostToolUse        = 'post-tool.ps1'
     PostToolUseFailure = 'post-tool.ps1'
     Stop               = 'stop.ps1'
+    SessionEnd         = 'session-end.ps1'
     SessionStart       = 'session-start.ps1'
     PreCompact         = 'pre-compact.ps1'
 }
@@ -160,7 +164,7 @@ if ($settingsExists) {
 }
 
 # What is actually registered decides what "healthy" means here. A skills-only
-# copy has no hooks by design, and six red wiring checks for that would teach
+# copy has no hooks by design, and a row of red wiring checks for that would teach
 # people to ignore the doctor.
 $hookCount = 0
 if ($settings) {
@@ -242,15 +246,17 @@ if ($Replay) {
     } else {
         $replayRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('opus-tuner-replay-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $replayProject = Join-Path $replayRoot 'project'
-        $replayClaude = Join-Path $replayProject '.claude'
-        New-Item -ItemType Directory -Force -Path $replayClaude | Out-Null
-        # A brief makes SessionStart emit real JSON, so the replay exercises the
-        # output shape rather than only the empty-output path.
-        [System.IO.File]::WriteAllText((Join-Path $replayClaude 'handoff.md'),
-            "# Handoff - replay`n`n## Next step`n- replay the wiring`n",
+        $replayHandoffs = Join-Path (Join-Path (Join-Path $replayRoot 'state') 'tuner') 'handoffs'
+        New-Item -ItemType Directory -Force -Path $replayProject, $replayHandoffs | Out-Null
+        # A ready handoff makes SessionEnd and SessionStart do their real work, so
+        # the replay exercises the /clear pickup and the output shape rather than
+        # only the empty-output path.
+        [System.IO.File]::WriteAllText((Join-Path $replayHandoffs 'replay-end.md'),
+            "---`nsession_id: replay-end`nproject: $replayProject`nstatus: ready`n---`n# Handoff - replay`n`n## Next step`n- replay the wiring`n",
             (New-Object System.Text.UTF8Encoding($false)))
 
         $cases = @(
+            @{ event = 'SessionEnd'; payload = @{ session_id = 'replay-end'; cwd = $replayProject; hook_event_name = 'SessionEnd'; reason = 'clear' } },
             @{ event = 'SessionStart'; payload = @{ session_id = 'replay-start'; cwd = $replayProject; hook_event_name = 'SessionStart'; source = 'clear' } },
             @{ event = 'UserPromptSubmit'; payload = @{ session_id = 'replay-route'; cwd = $replayProject; hook_event_name = 'UserPromptSubmit'; prompt = 'refactor the auth module, then fix the failing test suite'; transcript_path = '' } },
             @{ event = 'PostToolUse'; payload = @{ session_id = 'replay-post'; cwd = $replayProject; hook_event_name = 'PostToolUse'; tool_name = 'Edit'; tool_input = @{ file_path = (Join-Path $replayProject 'a.ts') } } },

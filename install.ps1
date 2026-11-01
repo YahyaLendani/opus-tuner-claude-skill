@@ -242,7 +242,17 @@ if (-not $NoHooks) {
     } else {
         Set-OurHook $hooks 'PreToolUse' $null
     }
-    Write-Host '  ok     six hook events (PreToolUse only with -Enforce)'
+    # An upgrade without -Force keeps the installed scripts, which may predate this
+    # hook. Registering it anyway would run a missing file on every session exit.
+    $sessionEndScript = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'session-end.ps1'
+    if ($DryRun -or (Test-Path -LiteralPath $sessionEndScript)) {
+        Set-OurHook $hooks 'SessionEnd' (New-HookGroup 'session-end.ps1' '' 5)
+        Write-Host '  ok     seven hook events (PreToolUse only with -Enforce)'
+    } else {
+        Set-OurHook $hooks 'SessionEnd' $null
+        Write-Host '  ok     six hook events (PreToolUse only with -Enforce)'
+        Write-Host '  note   the installed scripts predate SessionEnd; run with -Force to upgrade them.' -ForegroundColor Yellow
+    }
 
     $statusLineOurs = $false
     if ($settings.Contains('statusLine') -and $settings['statusLine']) {

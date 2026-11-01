@@ -78,34 +78,54 @@ try {
         }
     }
 
-    # Where the brief gets picked up. /clear is the primary path. In the VS Code
-    # panel a new conversation often starts as 'startup' instead, so accept a
-    # brief written in the last 24 hours there; an older one is stale and would
-    # resurrect work the session has moved past.
+    # A resumed session is alive again, so its handoff is no longer up for grabs.
+    if (($source -eq 'resume' -or $source -eq 'fork') -and -not [string]::IsNullOrWhiteSpace($sid)) {
+        Remove-HandoffMarkers $sid
+    }
+    if ($source -eq 'startup') { Remove-OldHandoffFiles }
+
+    # Which handoff this start may load. /clear takes the one its own session
+    # claimed on the way out. In the VS Code panel a new conversation often starts
+    # as 'startup' instead, so there the only candidate qualifies once the session
+    # that wrote it has ended. Anything less certain is announced, never injected:
+    # the handoff may belong to another session still running in this project.
     $body = ''
-    if (-not [string]::IsNullOrWhiteSpace($cwd)) {
-        $brief = Join-Path (Join-Path $cwd '.claude') 'handoff.md'
-        if (Test-Path -LiteralPath $brief) {
-            $inject = $false
-            if ($source -eq 'clear') {
-                $inject = $true
-            } elseif ($source -eq 'startup') {
-                $age = (Get-Date) - (Get-Item -LiteralPath $brief).LastWriteTime
-                if ($age.TotalHours -le 24) { $inject = $true }
+    if (($source -eq 'clear' -or $source -eq 'startup') -and -not [string]::IsNullOrWhiteSpace($cwd)) {
+        $waiting = Get-WaitingHandoffs $cwd
+        $picked = $null
+        $ambiguous = $false
+        if ($source -eq 'clear') {
+            $claims = Get-HandoffClaims $cwd
+            if ($claims.Count -eq 1) {
+                $picked = $claims[0]
+            } elseif ($claims.Count -gt 1) {
+                $ambiguous = $true
             }
-
-            if ($inject) {
-                $text = Get-Content -LiteralPath $brief -Raw -Encoding UTF8
-                if (-not [string]::IsNullOrWhiteSpace($text)) {
-                    $text = $text -replace "`r`n", "`n"
-                    if ($text.Length -gt 6000) { $text = $text.Substring(0, 6000) + "`n...[truncated]" }
-                    $body = "Resuming from a handoff brief. It is the working state; continue from its Next step and do not re-explore what it already records.`n`n$text"
-
-                    # Consume it so a later /clear in an unrelated session does
-                    # not resurrect it.
-                    try { Move-Item -LiteralPath $brief -Destination (Join-Path (Join-Path $cwd '.claude') 'handoff.consumed.md') -Force } catch { }
-                }
+        } elseif ($waiting.Count -eq 1) {
+            if (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($waiting[0]['path'], 'ended'))) {
+                $picked = $waiting[0]
             }
+        }
+
+        if ($picked) {
+            $received = Receive-Handoff $picked
+            if ($received) {
+                $body = "Resuming from a handoff brief. It is the working state; continue from its Next step and do not re-explore what it already records.`n`n$(Get-HandoffInjection $received)"
+            }
+            $waiting = @($waiting | Where-Object { $_['path'] -ne $picked['path'] })
+        }
+
+        $paths = @($waiting | ForEach-Object { $_['path'] })
+        if ($paths.Count -gt 0) {
+            $why = if ($ambiguous) { 'several sessions in this project were cleared at once, so none was loaded' }
+                   else { 'only the session that wrote a handoff may load it automatically' }
+            [void]$msgs.Add("$($paths.Count) handoff(s) wait for this project; $why. If one is yours, ask Claude to read it: $($paths -join ', ')")
+        }
+
+        # A shared file from an older version has no owner, so it is only reported.
+        $legacy = Join-Path (Join-Path $cwd '.claude') 'handoff.md'
+        if (Test-Path -LiteralPath $legacy) {
+            [void]$msgs.Add("An older opus-tuner left $legacy. It is shared by every session in the project, so it is no longer loaded automatically. Ask Claude to read it if it is yours, then delete it.")
         }
     }
 

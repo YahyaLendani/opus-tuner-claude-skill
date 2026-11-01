@@ -376,13 +376,317 @@ function Get-Ceiling {
     return [int64]$Config['routineTokens']
 }
 
-function Get-NewestTranscript {
-    $projects = Join-Path $script:TunerRoot 'projects'
-    if (-not (Test-Path -LiteralPath $projects)) { return $null }
-    $f = Get-ChildItem -LiteralPath $projects -Recurse -Filter '*.jsonl' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($f) { return $f.FullName }
-    return $null
+# A reader that never stands in the way of an atomic replace: a writer swapping
+# the file in only needs Delete sharing from everyone holding it open.
+function Read-SharedText {
+    param([string]$Path)
+    $share = [System.IO.FileShare]'ReadWrite,Delete'
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    try {
+        $reader = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+        return $reader.ReadToEnd()
+    } finally { $fs.Dispose() }
+}
+
+# Temp file in the same directory, flushed to disk, then swapped in. A crash at
+# any point leaves either the old file or the new one, never half of either. The
+# swap retries because on Windows a scanner or indexer can hold the target for a
+# moment. Returns $false when the swap never succeeded.
+function Write-AtomicText {
+    param([string]$Path, [string]$Text)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $tmp = "$Path.$PID.$([guid]::NewGuid().ToString('N').Substring(0, 8)).tmp"
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Text)
+    try {
+        $fs = New-Object System.IO.FileStream($tmp, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try {
+            $fs.Write($bytes, 0, $bytes.Length)
+            $fs.Flush($true)
+        } finally { $fs.Dispose() }
+        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            try {
+                if ([System.IO.File]::Exists($Path)) {
+                    [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)
+                } else {
+                    [System.IO.File]::Move($tmp, $Path)
+                }
+                return $true
+            } catch {
+                Start-Sleep -Milliseconds (10 + 5 * $attempt)
+            }
+        }
+        return $false
+    } finally {
+        if ([System.IO.File]::Exists($tmp)) { try { [System.IO.File]::Delete($tmp) } catch { } }
+    }
+}
+
+# Masks credentials before text is saved or injected. Deliberately eager: a
+# masked word in a handoff costs a re-read, a leaked key costs a rotation. The
+# word "tokens" stays readable, because this bundle talks about it constantly.
+function Protect-Sensitive {
+    param([string]$Text)
+    if (-not $Text) { return $Text }
+    $t = $Text
+    $t = [regex]::Replace($t, '-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\z)', '[REDACTED:private-key]')
+    $t = [regex]::Replace($t, '\b([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s:@''"]+:[^/\s@''"]+@', '$1[REDACTED]@')
+    $t = [regex]::Replace($t, '(?i)\b((?:proxy-)?authorization)(["'']?\s*[:=]\s*["'']?)(?:(?:bearer|basic|token|digest)\s+)?[^\s"'',;]+', '$1$2[REDACTED]')
+    $t = [regex]::Replace($t, '(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}', '$1 [REDACTED]')
+    $secretWords = 'password|passwd|pwd|passphrase|secret|token(?!s\b)|api[_-]?key|access[_-]?key|private[_-]?key|session[_-]?key|credential'
+    $t = [regex]::Replace($t, '(?i)(?<![a-z0-9-])(--?[a-z0-9-]*(?:' + $secretWords + ')[a-z0-9-]*)(=|\s+)("[^"]*"|''[^'']*''|\S+)', '$1$2[REDACTED]')
+    $t = [regex]::Replace($t, '(?i)(\b[a-z0-9_.-]*(?:' + $secretWords + ')[a-z0-9_.-]*["'']?)(\s*[:=]\s*)("[^"]*"|''[^'']*''|[^\s,;&''"]+)', '$1$2[REDACTED]')
+    foreach ($shape in @(
+        '\bsk-[A-Za-z0-9_-]{16,}',
+        '\bgh[pousr]_[A-Za-z0-9]{20,}',
+        '\bgithub_pat_[A-Za-z0-9_]{20,}',
+        '\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b',
+        '\bxox[abeoprs]-[A-Za-z0-9-]{10,}',
+        '\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}',
+        '\bAIza[0-9A-Za-z_-]{30,}',
+        '\bglpat-[A-Za-z0-9_-]{16,}',
+        '\bnpm_[A-Za-z0-9]{30,}'
+    )) {
+        $t = [regex]::Replace($t, $shape, '[REDACTED]')
+    }
+    return $t
+}
+
+# ---------- session identity ----------
+#
+# Nothing may be attributed to a session on a guess. An id comes from the caller,
+# or from the variable Claude Code exports to its own shell tools. A literal
+# "${CLAUDE_SESSION_ID}" is a skill whose substitution did not run, not an id.
+function Resolve-SessionId {
+    param([string]$Explicit = '')
+    $id = $Explicit
+    if ($id -match '^\$\{') { $id = '' }
+    if ([string]::IsNullOrWhiteSpace($id)) { $id = [string]$env:CLAUDE_CODE_SESSION_ID }
+    return $id.Trim()
+}
+
+function Test-SessionId {
+    param([string]$Id)
+    return ($Id -cmatch '^[A-Za-z0-9_-]{1,128}$')
+}
+
+# Returns @{ ok; transcript; error }. An explicit path must belong to the session;
+# otherwise only the exact file name counts, in exactly one project folder.
+function Resolve-SessionTranscript {
+    param([string]$SessionId, [string]$Transcript = '')
+    if ($Transcript) {
+        if (-not (Test-Path -LiteralPath $Transcript)) { return @{ ok = $false; error = "transcript not found: $Transcript" } }
+        $own = ([System.IO.Path]::GetFileNameWithoutExtension($Transcript) -ceq $SessionId)
+        if (-not $own) {
+            $tail = Read-FileTail -Path $Transcript -Bytes 131072
+            $own = $tail -and ($tail -match ('"sessionId"\s*:\s*"' + [regex]::Escape($SessionId) + '"'))
+        }
+        if (-not $own) { return @{ ok = $false; error = "transcript does not belong to session ${SessionId}: $Transcript" } }
+        return @{ ok = $true; transcript = $Transcript }
+    }
+    $root = Join-Path $script:TunerRoot 'projects'
+    $hits = @()
+    if (Test-Path -LiteralPath $root) {
+        $hits = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "$SessionId.jsonl" } |
+            Where-Object { Test-Path -LiteralPath $_ })
+    }
+    if ($hits.Count -eq 0) { return @{ ok = $false; error = "no transcript for session $SessionId under $root" } }
+    if ($hits.Count -gt 1) { return @{ ok = $false; error = "session $SessionId has $($hits.Count) transcripts; pass -Transcript" } }
+    return @{ ok = $true; transcript = $hits[0] }
+}
+
+# Every working directory the transcript's recent records report, newest last.
+function Get-TranscriptCwds {
+    param([string]$Path)
+    $out = New-Object System.Collections.ArrayList
+    $tail = Read-FileTail -Path $Path -Bytes 524288
+    if (-not $tail) { return , $out }
+    foreach ($m in [regex]::Matches($tail, '"cwd"\s*:\s*("(?:[^"\\]|\\.)*")')) {
+        try { $v = [string]($m.Groups[1].Value | ConvertFrom-Json) } catch { continue }
+        if ($v) {
+            [void]$out.Remove($v)
+            [void]$out.Add($v)
+        }
+    }
+    return , $out
+}
+
+function ConvertTo-ComparablePath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $p = $Path
+    try { $p = [System.IO.Path]::GetFullPath($p) } catch { }
+    $p = $p.TrimEnd('\', '/').Replace('\', '/')
+    if ($script:OnWindows) { $p = $p.ToLowerInvariant() }
+    return $p
+}
+
+function Test-SameProject {
+    param([string]$A, [string]$B)
+    $x = ConvertTo-ComparablePath $A
+    return ($x -and $x -ceq (ConvertTo-ComparablePath $B))
+}
+
+# Same directory, or one inside the other: a session can cd within its project.
+function Test-RelatedProject {
+    param([string]$A, [string]$B)
+    $x = ConvertTo-ComparablePath $A
+    $y = ConvertTo-ComparablePath $B
+    if (-not $x -or -not $y) { return $false }
+    return ($x -ceq $y -or $x.StartsWith("$y/", [System.StringComparison]::Ordinal) -or $y.StartsWith("$x/", [System.StringComparison]::Ordinal))
+}
+
+# ---------- handoffs ----------
+#
+# One file per session, outside any repository, so a concurrent session can
+# neither overwrite one nor pick it up. Required sections come first: truncating
+# an oversize handoff at injection then only ever costs the derived facts.
+$script:HandoffRequired = @('Task goal', 'User constraints', 'Decisions', 'Unresolved problems', 'Verification results', 'Next step')
+$script:HandoffMaxChars = 6000
+
+function Get-HandoffDir { return (Join-Path $script:TunerState 'handoffs') }
+
+function Get-HandoffPath {
+    param([string]$SessionId)
+    return (Join-Path (Get-HandoffDir) "$($SessionId -replace '[^A-Za-z0-9_-]', '_').md")
+}
+
+# Returns the parsed file, or $null for anything that is not a handoff.
+function Read-Handoff {
+    param([string]$Path)
+    try {
+        $text = Read-SharedText $Path
+        $m = [regex]::Match($text, '(?s)\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\z')
+        if (-not $m.Success) { return $null }
+        $h = @{ path = $Path; body = $m.Groups[2].Value; session_id = ''; project = ''; transcript = ''; status = ''; written = '' }
+        foreach ($line in ($m.Groups[1].Value -split "`r?`n")) {
+            $kv = [regex]::Match($line, '^([a-z_]+):\s*(.*)$')
+            if ($kv.Success) { $h[$kv.Groups[1].Value] = $kv.Groups[2].Value.Trim() }
+        }
+        return $h
+    } catch { return $null }
+}
+
+function Get-HandoffAgeHours {
+    param([string]$Path)
+    return ((Get-Date) - (Get-Item -LiteralPath $Path).LastWriteTime).TotalHours
+}
+
+# The ready handoffs written in this project in the last 24 hours. An older one
+# would resurrect work the project has moved past.
+function Get-WaitingHandoffs {
+    param([string]$Cwd)
+    $out = New-Object System.Collections.ArrayList
+    $dir = Get-HandoffDir
+    if (-not (Test-Path -LiteralPath $dir)) { return , $out }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.md' -ErrorAction SilentlyContinue)) {
+        $h = Read-Handoff $f.FullName
+        if (-not $h -or $h['status'] -ne 'ready') { continue }
+        if (-not (Test-SameProject $h['project'] $Cwd)) { continue }
+        if ((Get-HandoffAgeHours $f.FullName) -gt 24) { continue }
+        [void]$out.Add($h)
+    }
+    return , $out
+}
+
+# Markers are what SessionEnd leaves behind: <sid>.claim when the session ran
+# /clear, <sid>.ended whenever it ended at all.
+function Set-HandoffMarker {
+    param([string]$SessionId, [string]$Kind, [string]$Cwd)
+    $path = [System.IO.Path]::ChangeExtension((Get-HandoffPath $SessionId), $Kind)
+    $json = @{ session_id = $SessionId; cwd = $Cwd; time = (Get-Date).ToString('o') } | ConvertTo-Json -Compress
+    [void](Write-AtomicText $path $json)
+}
+
+function Remove-HandoffMarkers {
+    param([string]$SessionId)
+    $base = Get-HandoffPath $SessionId
+    foreach ($kind in @('claim', 'ended')) {
+        $p = [System.IO.Path]::ChangeExtension($base, $kind)
+        if (Test-Path -LiteralPath $p) { try { Remove-Item -LiteralPath $p -Force } catch { } }
+    }
+}
+
+# Fresh claims for this directory whose handoff is still ready. SessionEnd runs
+# moments before the matching SessionStart, so an old claim belongs to a start
+# that never happened and must not be picked up by an unrelated one.
+function Get-HandoffClaims {
+    param([string]$Cwd, [int]$MaxAgeSeconds = 120)
+    $out = New-Object System.Collections.ArrayList
+    $dir = Get-HandoffDir
+    if (-not (Test-Path -LiteralPath $dir)) { return , $out }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.claim' -ErrorAction SilentlyContinue)) {
+        try {
+            if (((Get-Date) - $f.LastWriteTime).TotalSeconds -gt $MaxAgeSeconds) { continue }
+            $claim = ConvertTo-Hashtable (Read-SharedText $f.FullName | ConvertFrom-Json)
+            if (-not (Test-SameProject ([string]$claim['cwd']) $Cwd)) { continue }
+            $h = Read-Handoff ([System.IO.Path]::ChangeExtension($f.FullName, 'md'))
+            if ($h -and $h['status'] -eq 'ready') { [void]$out.Add($h) }
+        } catch { }
+    }
+    return , $out
+}
+
+# Whoever renames the handoff itself owns it, so racing starts cannot both inject
+# it, whichever marker led them here. The copy kept for a while in case the pickup
+# went wrong is scrubbed: the file may have been edited by hand since verification.
+function Receive-Handoff {
+    param($Handoff)
+    $path = [string]$Handoff['path']
+    $taken = "$path.$PID.taken"
+    $moved = $false
+    for ($attempt = 0; $attempt -lt 10 -and -not $moved; $attempt++) {
+        if (-not [System.IO.File]::Exists($path)) { return $null }
+        try {
+            [System.IO.File]::Move($path, $taken)
+            $moved = $true
+        } catch { Start-Sleep -Milliseconds 20 }
+    }
+    if (-not $moved) { return $null }
+
+    $fresh = Read-Handoff $taken
+    if (-not $fresh) {
+        try { [System.IO.File]::Move($taken, $path) } catch { }
+        return $null
+    }
+    Remove-HandoffMarkers ([string]$Handoff['session_id'])
+    $kept = Join-Path (Join-Path (Get-HandoffDir) 'consumed') (Split-Path -Leaf $path)
+    try {
+        [void](Write-AtomicText $kept (Protect-Sensitive (Read-SharedText $taken)))
+        Remove-Item -LiteralPath $taken -Force
+    } catch { }
+    return $fresh
+}
+
+# What goes into the new session: the body, scrubbed again, because the file may
+# have been edited by hand since verification.
+function Get-HandoffInjection {
+    param($Handoff)
+    $text = Protect-Sensitive (([string]$Handoff['body']) -replace "`r`n", "`n")
+    $text = $text.Trim()
+    if ($text.Length -gt $script:HandoffMaxChars) {
+        $cut = $text.LastIndexOf("`n", $script:HandoffMaxChars)
+        if ($cut -lt 0) { $cut = $script:HandoffMaxChars }
+        $text = $text.Substring(0, $cut) + "`n...[truncated]"
+    }
+    return $text
+}
+
+# Housekeeping for a directory that otherwise only grows. Runs on fresh starts.
+function Remove-OldHandoffFiles {
+    $dir = Get-HandoffDir
+    if (-not (Test-Path -LiteralPath $dir)) { return }
+    $now = Get-Date
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Recurse -ErrorAction SilentlyContinue)) {
+        $days = ($now - $f.LastWriteTime).TotalDays
+        $old = switch -Regex ($f.Name) {
+            '\.(tmp|taken)$'    { $days -gt 1; break }
+            '\.(claim|ended)$'  { $days -gt 7; break }
+            default             { $days -gt 30 }
+        }
+        if ($old) { try { Remove-Item -LiteralPath $f.FullName -Force } catch { } }
+    }
 }
 
 # One line per decision, not per prompt. Without this the bundle can only be

@@ -348,40 +348,59 @@ Check 'advise mode never blocks a read' ($r.text.Length -eq 0) $r.text
 Write-Host ''
 Write-Host 'handoff round trip' -ForegroundColor Yellow
 
-$briefOut = (& $Interpreter @ExePrefix -File (Join-Path $here 'brief.ps1') -Cwd $sandbox -Transcript $large) -join "`n"
-$briefPath = Join-Path (Join-Path $sandbox '.claude') 'handoff.md'
-Check 'brief.ps1 writes .claude/handoff.md' (Test-Path $briefPath) $briefOut
-if (Test-Path $briefPath) {
-    $t = Get-Content $briefPath -Raw
-    Check 'brief has all required sections' (
-        $t -match '## Decisions' -and $t -match '## Dead ends' -and
-        $t -match '## Unverified assumptions' -and $t -match '## Next step')
+# tests/handoff-test.ps1 holds the full contract: identity, concurrent sessions,
+# secrets. This is the round trip through the scripts under test.
+function New-ReadyHandoff {
+    param([string]$Text)
+    $id = New-Sid
+    $tr = Join-Path $sandbox "$id.jsonl"
+    Copy-Item -LiteralPath $large -Destination $tr
+    $draftOut = (& $Interpreter @ExePrefix -File (Join-Path $here 'brief.ps1') -SessionId $id -Transcript $tr -Project $sandbox) -join "`n"
+    $path = Get-HandoffPath $id
+    $draft = ''
+    if (Test-Path -LiteralPath $path) { $draft = Get-Content -LiteralPath $path -Raw -Encoding UTF8 }
+    [System.IO.File]::WriteAllText($path, ([regex]::Replace($draft, '_\(fill:[^\n]*\)_', $Text)), (New-Object System.Text.UTF8Encoding($false)))
+    $verifyOut = (& $Interpreter @ExePrefix -File (Join-Path $here 'brief.ps1') -SessionId $id -Verify) -join "`n"
+    $verifyCode = $LASTEXITCODE
+    return @{ id = $id; path = $path; draft = $draft; draftOut = $draftOut; verifyOut = $verifyOut; verifyCode = $verifyCode }
 }
 
+$h = New-ReadyHandoff 'run the tests'
+Check 'brief.ps1 writes a handoff for its session' ($h.draft -match "(?m)^session_id: $($h.id)\s*$") $h.draftOut
+Check 'brief has all required sections' (
+    $h.draft -match '## Task goal' -and $h.draft -match '## User constraints' -and
+    $h.draft -match '## Decisions' -and $h.draft -match '## Unresolved problems' -and
+    $h.draft -match '## Verification results' -and $h.draft -match '## Next step')
+Check 'a filled handoff verifies' ($h.verifyCode -eq 0) $h.verifyOut
+Check 'verification asks the user to run /clear' ($h.verifyOut -match '/clear') $h.verifyOut
+
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'clear'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'clear re-seeds from the brief' ($r.text -match 'Resuming from a handoff') $r.text.Substring(0, [Math]::Min(120, $r.text.Length))
-Check 'brief consumed after re-seed' (-not (Test-Path $briefPath) -and (Test-Path (Join-Path (Join-Path $sandbox '.claude') 'handoff.consumed.md')))
+Check 'brief consumed after re-seed' (-not (Test-Path $h.path) -and (Test-Path (Join-Path (Join-Path (Get-HandoffDir) 'consumed') (Split-Path -Leaf $h.path))))
 
 # The VS Code panel often starts a new conversation as 'startup', not 'clear'.
-Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nrun the tests" -Encoding UTF8
+$h = New-ReadyHandoff 'run the tests'
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'other'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'fresh startup re-seeds (VS Code new chat)' ($r.text -match 'Resuming from a handoff') $r.text
-Check 'startup consumes the brief' (-not (Test-Path $briefPath))
+Check 'startup consumes the brief' (-not (Test-Path $h.path))
 
-Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nstale work" -Encoding UTF8
-(Get-Item -LiteralPath $briefPath).LastWriteTime = (Get-Date).AddDays(-3)
+$h = New-ReadyHandoff 'stale work'
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'other'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
+(Get-Item -LiteralPath $h.path).LastWriteTime = (Get-Date).AddDays(-3)
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'startup'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
-Check 'stale startup brief is ignored' ($r.text.Length -eq 0 -and (Test-Path $briefPath)) $r.text
-Remove-Item -LiteralPath $briefPath -Force
+Check 'stale startup brief is ignored' ($r.text.Length -eq 0 -and (Test-Path $h.path)) $r.text
+Remove-Item -LiteralPath $h.path -Force
 
-Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nresume work" -Encoding UTF8
+$h = New-ReadyHandoff 'resume work'
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'resume'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 Check 'resume does not inject the brief' ($r.text.Length -eq 0)
-Remove-Item -LiteralPath $briefPath -Force
+Remove-Item -LiteralPath $h.path -Force
 
 # Resuming pays before the first new token. The warning must ride on
 # systemMessage (free) rather than additionalContext (billed on every turn).
@@ -417,13 +436,20 @@ $offCfg = Join-Path $sandbox 'off.json'
 $c = Get-TunerConfig -Defaults
 $c.mode = 'off'
 $c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $offCfg -Encoding UTF8
-Set-Content -LiteralPath $briefPath -Value "# Handoff`n`n## Next step`n`nshould not load" -Encoding UTF8
+$h = New-ReadyHandoff 'should not load'
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'clear'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
 $env:OPUS_TUNER_CONFIG = $offCfg
 $sid = New-Sid
 $r = Invoke-Hook 'session-start.ps1' (@{ session_id = $sid; cwd = $sandbox; source = 'clear'; hook_event_name = 'SessionStart' } | ConvertTo-Json -Compress)
 $env:OPUS_TUNER_CONFIG = $script:BaseConfig
-Check 'mode off silences session start' ($r.text.Length -eq 0 -and (Test-Path $briefPath)) $r.text
-Remove-Item -LiteralPath $briefPath -Force -ErrorAction SilentlyContinue
+Check 'mode off silences session start' ($r.text.Length -eq 0 -and (Test-Path $h.path)) $r.text
+Remove-HandoffMarkers $h.id
+
+$env:OPUS_TUNER_CONFIG = $offCfg
+$null = Invoke-Hook 'session-end.ps1' (@{ session_id = $h.id; cwd = $sandbox; reason = 'clear'; hook_event_name = 'SessionEnd' } | ConvertTo-Json -Compress)
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
+Check 'mode off leaves no pickup marker' (-not (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($h.path, 'claim'))))
+Remove-Item -LiteralPath $h.path -Force -ErrorAction SilentlyContinue
 
 # Regression: a compaction resets the session, and used to re-arm the
 # once-per-session limits along with it.
