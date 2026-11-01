@@ -7,15 +7,19 @@
 [![code](https://img.shields.io/github/languages/top/YahyaLendani/opus-tuner-claude-skill)](https://github.com/YahyaLendani/opus-tuner-claude-skill/search?l=powershell)
 [![dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](#design-constraints)
 
-**Cost control for long Claude Code sessions on Windows, macOS and Linux.**
+**Context tracking and safe session handoffs for long Claude Code sessions on Windows, macOS and Linux.**
 
-Claude Code bills by *context size × number of turns*. This bundle keeps the
-model and effort level you chose, but puts a ceiling on the two things that
-quietly dominate the bill: a context that grows without limit, and turns that
-re-read it for work that did not need it.
+Every request re-reads the whole context, so a long session spends most of its
+tokens re-reading. This bundle keeps the model and effort level you chose, shows
+the context against a ceiling you set, and prepares a verified handoff when you want
+to continue in a fresh session. Nothing interrupts your session unless you ask for
+it.
 
-Six hooks, seven skills per install, a handoff writer, four effort gears, two
-profiles, and a measuring tool. No network calls, no API keys, no dependencies.
+Seven hook events, seven skills per install, a handoff writer, four effort gears,
+two profiles, and a measuring tool. No network calls, no API keys, no dependencies.
+
+Whether it saves tokens on your work has not been measured yet: the comparison
+harness is in [`benchmarks/`](benchmarks/README.md), and its results are pending.
 
 > **Status:** 0.6.1. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
@@ -31,19 +35,20 @@ In an audit of one heavy week of Opus sessions, cache reads were **98.7% of all
 tokens** and **78% of the API-equivalent cost**. Output — the thing people
 usually try to shorten — was 0.3% of tokens and 12% of cost. Two sessions
 accounted for 69% of the spend, both by running at 300–450k context per request.
+That was one person's week, measured with the audit from before 0.7, which counted
+repeated records and priced a session at one rate. Read it as a shape, not a result.
 
-That shape says the levers are, in order:
+That shape suggests where to look, in order:
 
-1. **Cap the context.** Every request re-reads all of it. Halving it halves the
-   dominant line item.
-2. **Stop paying for turns that did not need to happen.** A gear change or a
-   subagent costs one extra request; it has to buy back more than that.
-3. **Make the expensive turn rare.** Spend `max` effort when a wrong answer
-   costs a full turn, not by default.
+1. **The context size.** Every request re-reads all of it.
+2. **Turns that did not need to happen.** A gear change or a subagent costs one
+   extra request.
+3. **The most expensive turns.** `max` effort is for when a wrong answer costs a
+   full turn.
 
-The bundle does those three things and gives you the instrument to check whether
-they worked. It does **not** downgrade your model, silently compact your session,
-or clear it for you.
+The bundle shows those numbers, offers ways to act on them, and gives you the
+instrument to check the result. It does **not** downgrade your model, silently
+compact your session, or clear it for you.
 
 ## What it does
 
@@ -54,11 +59,11 @@ tier, the effort level, and both rate-limit windows:
 Opus 5.5 | high | [#####.....] 78k/150k 52% | routine | 5h 34% | 7d 12%
 ```
 
-At 70% it adds one line, and at the ceiling it adds the instruction that matters:
+At 70% it adds one line, and another at the ceiling:
 
 ```text
 Opus 5.5 | high | [########..] 132k/150k 88% | routine | 5h 61% | 7d 22%
--> finish this unit, then /wrap
+-> to continue in a fresh session later: /wrap when this unit is done
 ```
 
 That is the real output of `statusline.ps1` for a sample session, with the colour
@@ -67,14 +72,14 @@ codes stripped. The bar turns yellow at 70% and red at 90%.
 | Mechanism | Behaviour |
 |---|---|
 | **Tiered ceilings** | 150k routine, 250k deep. Deep is for refactors, hard debugging, architecture. Escalate-only: a session never drops back mid-flight. |
-| **Hard wrap** | At the ceiling the `Stop` hook returns `decision: "block"` **once**, with a reason that tells the model to write the handoff brief. The ceiling becomes a gate, not a suggestion. |
-| **Grace band** | Between the routine ceiling and +25k the tier steps up to deep instead of interrupting a task that is nearly finished. |
-| **Effort gears** | `low` / `medium` / `xhigh` / `max` as one-turn skills. Default is `high` and costs nothing. The router only asks for a gear when the extra request pays for itself. |
-| **Handoff, not compaction** | `/wrap` writes a brief from transcript facts; `/clear` starts fresh at ~500 tokens. Cheaper than `/compact`, which pays a full context read to summarize. |
-| **Compaction is watched** | Every compaction is logged, and the first manual `/compact` in a session is refused once with a pointer to `/wrap` + `/clear`. Auto-compaction is never blocked. |
-| **Decision log** | One CSV row per decision (not per prompt), so “did the gears ever pay?” is answerable a week later. |
-| **Measurement** | `audit.ps1` reports per-session cache read/write, output, peak context, and cost. `stats.ps1` reports what the tuner decided. |
-| **Automatic savings** | Weak trigger words (`why is`, `performance`) only raise the ceiling alongside a second sign of hard work. One oversized tool result gets a single ~40-token note on how to bound the next one. The at-ceiling note is said once, not every prompt. Each install mode skips the skill it cannot use. A weekly one-line summary shows what the tuner did and what its gear switches cost, at zero tokens. If low-effort turns keep hitting failures, the low gear switches itself off for 14 days; nothing ever lowers a ceiling on its own. |
+| **Modes** | `monitor` shows numbers, `assist` (the default) also routes and advises, `guard` also fires the interruptions you turn on. By default nothing interrupts a session. |
+| **Grace band** | Between the routine ceiling and +25k the tier steps up to deep instead of showing a ceiling note on a task that is nearly finished. |
+| **Effort gears** | `low` / `medium` / `xhigh` / `max` as one-turn skills. Default is `high` and needs no skill. The router only asks for a gear on a clear signal, since it costs one extra request. |
+| **Session handoffs** | `/wrap` prepares a handoff from this session's own transcript, omits raw command arguments, masks credentials, and checks the required sections before suggesting `/clear`. Each session keeps its own file, so concurrent sessions cannot overwrite or take each other's. A fresh session starts without the history and has to rebuild whatever the handoff leaves out. |
+| **Optional one-time prompts** | In guard mode, `hardWrap` asks once at the ceiling for a handoff if work remains, and `blockManualCompact` asks once before a manual `/compact`. These are prompts, not limits: see [what can interrupt a session](docs/configuration.md#what-can-interrupt-a-session). Auto-compaction is never blocked. |
+| **Decision log** | One CSV row per decision (not per prompt), so what the gears and compactions did is answerable a week later. |
+| **Measurement** | `audit.ps1` reports per-session cache read/write, output, peak context, and an API-equivalent estimate, which is not your bill or your subscription limit. `stats.ps1` reports what the tuner decided. |
+| **Small automatic behaviours** | Weak trigger words (`why is`, `performance`) only raise the ceiling alongside a second sign of hard work. One oversized tool result gets a single short note on how to bound the next one. The at-ceiling note is said once, not every prompt. Each install mode skips the skill it cannot use. A weekly one-line summary shows what the tuner did and what its gear switches re-read, at zero model tokens. If low-effort turns keep hitting failures, the low gear switches itself off for 14 days; nothing ever lowers a ceiling on its own. |
 | **Profiles** | `/profile` swaps between **dev** (the default, adds nothing) and **creative** (no `gear-low` downshift, no `gear-max`, deep tier on long-form work, one ~100-token note). `/profile show` prints exactly what is in effect. Persists across sessions. |
 | **Portable mode** | No hooks at all: `-NoHooks` installs the rules into `CLAUDE.md` only. The `claude-skill` skill carries the same discipline into Desktop and claude.ai, where hooks do not exist. |
 
@@ -83,13 +88,13 @@ codes stripped. The bar turns yellow at 70% and red at 90%.
 | Event | Script | What it does |
 |---|---|---|
 | `UserPromptSubmit` | `route.ps1` | Classifies the prompt, escalates the tier, picks a gear. |
-| `Stop` | `stop.ps1` | 70% warning, hard wrap at the ceiling, grace escalation. |
+| `Stop` | `stop.ps1` | 70% note, ceiling banner or optional one-time prompt, grace escalation. |
 | `PostToolUse` / `PostToolUseFailure` | `post-tool.ps1` | Counts consecutive failures and edited files; flags one oversized tool result with a short note, at most three per session (async; writes only on change). |
-| `SessionStart` | `session-start.ps1` | Resets the tier; re-seeds from the handoff brief; warns about a config typo and the cost of resuming a large session; once a week, shows a one-line summary of what the tuner did. |
-| `PreCompact` | `pre-compact.ps1` | Logs every compaction; refuses the first manual `/compact` per session. Never blocks auto. |
-| `PreToolUse` *(optional)* | `pre-tool.ps1` | In `enforce` mode, refuses unbounded `Read`s at the ceiling. |
+| `SessionStart` | `session-start.ps1` | Resets the tier; loads the handoff this session claimed; notes a config typo and the size of a large resumed session; once a week, shows a one-line summary of what the tuner did. |
+| `SessionEnd` | `session-end.ps1` | Marks this session's verified handoff as ready for the next session to load. |
+| `PreCompact` | `pre-compact.ps1` | Logs every compaction. In guard mode with `blockManualCompact`, refuses the first manual `/compact` per session. Never blocks auto. |
+| `PreToolUse` *(optional)* | `pre-tool.ps1` | In guard mode, when registered with `-Enforce`, refuses unbounded `Read`s at the ceiling. |
 
-Everything except the hard wrap and the first manual `/compact` is advisory.
 Hooks fail open: an error exits 0 and Claude Code continues.
 
 ## Dev and creative profiles
@@ -115,7 +120,7 @@ them.
 | Max-effort gear (`gear-max`) | up to 2 turns per session, on a hard problem that has already failed twice | never: extra thinking buys little for prose quality |
 | Deep tier (250k ceiling) triggered by | `refactor`, `root cause`, `race condition`, ... | `outline`, `chapter`, `story arc`, `rewrite`, `manuscript`, ... |
 | Added to the model's context | nothing | one note, ~100 tokens, at session start |
-| Ceilings, hard wrap, handoff, `/compact` guard | on | on, unchanged |
+| Ceilings, handoff, any interruptions you turned on | on | on, unchanged |
 
 Switching prints the result, and the model reads it, so the change applies from
 the next prompt of the current session as well as every later one. This is the
@@ -215,7 +220,7 @@ snap install powershell --classic
   hook-free `claude-skill` only with `-NoHooks`, the `profile` switch only with
   hooks, since every installed skill's description costs context on every
   request. A leftover from the other mode, or from 0.5.0, is moved to the backups;
-- merge six hook events into `~/.claude/settings.json`, **keeping your existing
+- merge seven hook events into `~/.claude/settings.json`, **keeping your existing
   hooks** and backing the file up first;
 - add a status line, unless you already have one;
 - append a marked token-discipline block to `~/.claude/CLAUDE.md`.
@@ -224,11 +229,16 @@ It is idempotent: running it again does not duplicate entries. Use `-Force` to
 replace existing skill folders and an existing status line (both are backed up).
 `-DryRun` prints the merged settings without writing.
 
+**Upgrading from before 0.7:** the one-time Stop prompt and the first-`/compact` block
+were on by default and are now opt-in. The installer keeps settings you chose, moving
+them to guard mode, and prints what changed. See
+[upgrading](docs/configuration.md#upgrading-from-before-07).
+
 Then restart Claude Code — or **Developer: Reload Window** in VS Code, which
 reads hook config at session start.
 
 ```powershell
-# optional: also register the PreToolUse read guard
+# optional: also register the PreToolUse read guard (it needs "mode": "guard")
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
 ```
 
@@ -248,12 +258,23 @@ Hooks only exist in Claude Code. Two fallbacks:
 
 ```powershell
 # Windows
-# 88 assertions: routing, hard wrap, compaction, handoff round trip, profiles, automatic savings, audit, timing
-# (87 if ~/.claude/settings.json does not exist yet — the matcher check is skipped)
+# routing, modes, compaction, handoff round trip, profiles, audit, timing
 powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 
-# 59 assertions: install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, future model, against a sandbox
+# install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, future model, against a sandbox
 powershell -NoProfile -File tests\install-test.ps1
+
+# handoffs across concurrent sessions and projects, with synthetic credentials
+powershell -NoProfile -File tests\handoff-test.ps1
+
+# overlapping hooks and damaged state cannot reverse a tier or repeat an interruption
+powershell -NoProfile -File tests\state-test.ps1
+
+# monitor, assist and guard: what each mode can block, and what an upgrade keeps
+powershell -NoProfile -File tests\modes-test.ps1
+
+# what the skills and docs claim matches what the scripts do
+powershell -NoProfile -File tests\docs-test.ps1
 
 # every relative Markdown link points at a file that exists (no network)
 powershell -NoProfile -File tests\link-check.ps1
@@ -264,7 +285,7 @@ powershell -NoProfile -File tests\badge-check.ps1
 # is the install healthy? hooks registered, scripts present, config valid
 powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1
 
-# prove the registered command strings actually run (all six events, ~3 s)
+# prove the registered command strings actually run (every event, ~3 s)
 powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1 -Replay
 
 # skills only: check this copy without requiring hooks (implied when none are registered)
@@ -272,7 +293,7 @@ powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1 -SkillsOnly
 ```
 
 ```sh
-# macOS / Linux — same scripts, same counts
+# macOS / Linux — same scripts
 pwsh -NoProfile -File skills/opus-tuner/scripts/selftest.ps1
 pwsh -NoProfile -File tests/install-test.ps1
 pwsh -NoProfile -File skills/opus-tuner/scripts/doctor.ps1
@@ -294,14 +315,14 @@ what catches a quoting error in the command string or a shell that cannot start
 the interpreter — failures that look identical to "no hooks" at runtime.
 
 A copy with no registered hooks is reported as an **advisory install** and exits
-0: the skills, config and scripts are checked, the six wiring checks are shown as
+0: the skills, config and scripts are checked, the hook wiring checks are shown as
 `skip`, and nothing is written to the state directory. A *partial* wiring (some
 events registered, others not) still fails, because that is a broken install
 rather than a deliberate one. `-SkillsOnly` forces the same view when hooks do
 exist but you only want to validate the skills.
 
 In Claude Code, `/hooks` should list `UserPromptSubmit`, `PostToolUse`,
-`PostToolUseFailure`, `Stop`, `SessionStart`, `PreCompact`; `/skills` should list
+`PostToolUseFailure`, `Stop`, `SessionStart`, `SessionEnd`, `PreCompact`; `/skills` should list
 `opus-tuner`, `gear-low`, `gear-medium`, `gear-xhigh`, `gear-max`, `wrap`,
 `profile`. With `-NoHooks`, `/hooks` is empty and that is expected, and `/skills`
 shows `claude-skill` instead of `profile`.
@@ -313,17 +334,16 @@ Defaults live in the scripts and are overridden by
 
 ```json
 {
-  "mode": "advise",
+  "mode": "assist",
   "routineTokens": 150000,
-  "deepTokens": 250000,
-  "hardWrap": true,
-  "blockManualCompact": true
+  "deepTokens": 250000
 }
 ```
 
-- `mode`: `advise` (default), `enforce` (adds the read guard), `off` (silent).
-- `hardWrap`: `false` restores the banner-only behaviour.
-- `blockManualCompact`: `false` logs `/compact` without ever refusing it.
+- `mode`: `monitor` (numbers only), `assist` (the default: also routing, notes and
+  handoffs), `guard` (also the interruptions below), `off` (silent).
+- `hardWrap`: in guard mode, `true` adds one Stop prompt at the ceiling.
+- `blockManualCompact`: in guard mode, `true` refuses the first manual `/compact` once.
 - Ceilings: lower them if you routinely hit the weekly limit; raise the routine
   one if you spend most of a session below it.
 
@@ -400,7 +420,7 @@ uninstaller rather than deleting folders by hand.
 |---|---|
 | [docs/platforms.md](docs/platforms.md) | Windows, macOS, Linux, terminal vs VS Code vs Desktop, `pwsh` install, `-NoHooks` |
 | [docs/architecture.md](docs/architecture.md) | Hook lifecycle, state schema, concurrency, latency budget |
-| [docs/configuration.md](docs/configuration.md) | Every knob, modes, enforce setup, tuning guidance |
+| [docs/configuration.md](docs/configuration.md) | Every knob, modes, what can interrupt a session, tuning guidance |
 | [docs/measuring.md](docs/measuring.md) | How `audit.ps1` counts, how to capture a baseline |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Hooks not firing, `pwsh` missing, VS Code quirks, quota questions |
 | [docs/decisions.md](docs/decisions.md) | Why the design is shaped this way |

@@ -49,14 +49,14 @@ order:
 
 ## When to hand off
 
-At a task boundary, or at 70% of the ceiling, whichever comes first. A handoff
-is cheaper than compaction: compaction pays a full read to write a summary, and
-that summary is then re-read on every later request.
+Consider it at a task boundary, or at 70% of the ceiling, whichever comes first.
+A fresh chat starts without the history, so each turn re-reads less, but it has to
+rebuild whatever the brief leaves out.
 
 Offer this, in one line, and let the user decide:
 
-> This chat is long enough that the next turns get expensive. I can write a
-> handoff brief for a fresh chat — say the word.
+> This chat has grown long. If you would like to continue in a fresh one, I can
+> write a handoff brief for it.
 
 ## Handoff brief
 

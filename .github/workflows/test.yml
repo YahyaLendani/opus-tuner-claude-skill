@@ -79,6 +79,10 @@ jobs:
         shell: powershell
         run: ./tests/modes-test.ps1 -Interpreter powershell
 
+      - name: Docs test
+        shell: powershell
+        run: ./tests/docs-test.ps1
+
       # Network, so it reports without blocking: a shields.io outage must not
       # fail a pull request, but a badge stuck on "no releases" should be seen.
       - name: Badges render
@@ -167,6 +171,10 @@ jobs:
       - name: Modes test
         shell: pwsh
         run: ./tests/modes-test.ps1 -Interpreter pwsh
+
+      - name: Docs test
+        shell: pwsh
+        run: ./tests/docs-test.ps1
 
       - name: install.sh wrapper (executable, LF, passes switches)
         shell: bash

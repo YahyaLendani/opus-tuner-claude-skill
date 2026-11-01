@@ -41,32 +41,35 @@ ceiling. Order is part of the contract, and the self-test asserts it.
 **Consequence.** A session between `routineTokens` and `+graceTokens` steps up to
 deep instead of being asked to wrap. Beyond the band, the ceiling wins.
 
-## 4. Hard wrap once, and never clear the session
+## 4. A one-time Stop prompt, off by default, and never clear the session
 
-**Context.** A banner is easy to ignore; a session that runs to 900k pays for it
-on every subsequent request. But an unattended `/clear` would throw away work the
-user may still be reading.
+**Context.** A banner is easy to miss, but interrupting someone's turn is a cost
+they should choose. An unattended `/clear` would throw away work the user may still
+be reading.
 
-**Decision.** At the ceiling the `Stop` hook returns `decision: "block"` with a
-reason that asks for `/wrap`. It fires at most once per crossing
-(`nudged.hardWrap`), never when `stop_hook_active` is set, and Claude Code's
-eight-continuation cap is a second backstop. Hooks cannot invoke slash commands,
-so `/clear` stays a human action.
+**Decision.** In guard mode with `hardWrap` on, the `Stop` hook returns
+`decision: "block"` at the ceiling with a reason that asks for a handoff if work
+remains. It fires at most once per crossing (`nudged.hardWrap`) and never when
+`stop_hook_active` is set. Hooks cannot invoke slash commands, so `/clear` stays a
+human action. Until 0.7 this was on by default, with no opt-in.
 
-**Consequence.** The ceiling is a gate, not a wall. A model that ignores the
-reason can still finish; it just cannot do so silently. `hardWrap: false` restores
-banner-only behaviour.
+**Consequence.** It is a prompt, not a limit. A model that ignores the reason can
+still finish, and nothing limits the context between stops. Whether it is worth having
+is an open question for the benchmarks in `benchmarks/`.
 
-## 5. Handoff instead of compaction
+## 5. Offer a handoff next to compaction
 
-**Context.** `/compact` pays a full read of the context to produce a summary, and
-the summary is then re-read on every later request.
+**Context.** `/compact` reads the context to produce a summary, and the summary is
+then re-read on every later request. A handoff has its own costs: writing it,
+starting a session, and rebuilding what it leaves out. Which one wins depends on the
+task, and no recorded comparison exists yet.
 
-**Decision.** `/wrap` writes a brief from transcript facts, then the user runs
-`/clear`. A new session starts at roughly 500 tokens.
+**Decision.** `/wrap` prepares a handoff from transcript facts, the model fills in and
+verifies it, and the user runs `/clear` if they want a fresh session. Both remain
+available.
 
-**Consequence.** A boundary costs one extra human action. In exchange the new
-context is small and the old one is gone, which is the point.
+**Consequence.** A boundary costs one extra human action. The docs do not call either
+one cheaper until a benchmark has recorded it.
 
 ## 6. Never switch the model mid-session
 
@@ -98,7 +101,7 @@ for one mechanical turn without persisting.
 propagates can strand a session or block a tool call.
 
 **Decision.** Every hook body is wrapped in `try { } catch { }` and ends with
-`exit 0`. The only intentional block is the hard wrap.
+`exit 0`. The only intentional blocks are the ones guard mode lets you turn on.
 
 **Consequence.** Bugs can be silent. The self-test asserts output shape and
 content rather than relying on exit codes.
@@ -128,14 +131,13 @@ plain PowerShell and run in CI on `windows-latest`.
 
 ## 11. Watch compaction, refuse only the manual one
 
-**Context.** The bundle exists to replace compaction with a handoff, yet it had no
-visibility into compaction at all: no `PreCompact` hook, so a session could
-auto-compact at 300k and nothing recorded it. A tool that cannot see its own
-failure mode is guessing.
+**Context.** The bundle measures sessions, yet it had no visibility into compaction
+at all: no `PreCompact` hook, so a session could auto-compact at 300k and nothing
+recorded it.
 
-**Decision.** Log every compaction with its context size, and refuse the **first**
-manual `/compact` per session once, pointing at `/wrap` + `/clear`. Never block
-automatic compaction.
+**Decision.** Log every compaction with its context size. In guard mode with
+`blockManualCompact` on, refuse the **first** manual `/compact` per session once,
+offering a handoff instead. Never block automatic compaction.
 
 **Consequence.** Auto-compaction stays unblocked because it can be the recovery
 path for a context-limit error: refusing it there surfaces the error and fails the

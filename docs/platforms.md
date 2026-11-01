@@ -96,11 +96,10 @@ for the others on the same machine.
 | Settings | `…\.claude\settings.json` | `~/.claude/settings.json` |
 | State | `…\.claude\state\tuner\` | `~/.claude/state/tuner/` |
 | Version | `…\.claude\skills\opus-tuner\VERSION` | `~/.claude/skills/opus-tuner/VERSION` |
-| Handoff brief | `<project>\.claude\handoff.md` | `<project>/.claude/handoff.md` |
+| Handoffs | `…\.claude\state\tuner\handoffs\<session>.md` | `~/.claude/state/tuner/handoffs/<session>.md` |
 
-The handoff brief is the one path that follows the **project**, not the config
-root. A brief written on Windows is readable on macOS: it is UTF-8 and the
-project-relative location is the same.
+Each handoff belongs to one session and records which project it came from, so it
+is only offered to a session in that project.
 
 ## Advisory mode (`-NoHooks`)
 
@@ -123,7 +122,7 @@ write `settings.json` at all. Consequences, stated plainly:
 - `/wrap` still works, because it is a skill that runs `brief.ps1`;
 - the gear skills still work when the model chooses them, but nothing routes to
   them;
-- `doctor.ps1` reports an advisory install (`skip` on the six wiring checks) and
+- `doctor.ps1` reports an advisory install (`skip` on the wiring checks) and
   exits 0 rather than failing; a partial wiring still fails.
 
 If a previous install left hooks behind, `-NoHooks` warns you and points at

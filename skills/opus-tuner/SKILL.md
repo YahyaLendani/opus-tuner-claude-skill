@@ -5,29 +5,24 @@ description: Token-budget discipline for long sessions - context size, session l
 
 # opus-tuner
 
-Cost in this setup is **context size x number of turns**, not verbosity. Output is
-under 1% of tokens. On a measured session, cache read was 98.7% of tokens and 78% of
-the API-equivalent price; cache write 10%; output 12%.
-
-So the rules below are about *how much gets re-read* and *how many turns pay for it*.
+Every request re-reads the whole context, so these rules are about how much gets
+re-read and how many requests read it.
 
 ## The five rules
 
-1. **Batch independent tool calls.** Every turn re-reads the whole context. Four
-   greps in one message cost one context read; four separate messages cost four.
-   This is the largest lever available inside a turn.
+1. **Batch independent tool calls.** Four greps in one message read the context
+   once; four separate messages read it four times.
 2. **Grep before read, and bound every read.** `Read` with no `limit`, or above 400
    lines, only when you are certain. Otherwise `offset`/`limit`, or search first.
    Never recursive-scan a repo to find one symbol.
-3. **Never trade verification for tokens.** A "saving" that causes rework is a loss:
-   one wrong turn at 150k costs more than ten careful greps.
+3. **Never trade verification for tokens.** A "saving" that causes rework is a loss.
 4. **Delegate breadth, not judgement.** Exploration, mechanical multi-file edits and
    test runs go to a subagent: the built-in `Explore` agent for finding code, a
    general-purpose one (Sonnet is enough) for mechanical edits and test runs. Its
    context is discarded when it returns; yours is re-read every turn.
-5. **Wrap at a boundary, not mid-task.** `/wrap` writes the brief, then `/clear`
-   gives a fresh ~500-token context. That is cheaper than `/compact`, which pays a
-   full read of the context to summarize it.
+5. **Hand off when the user asks.** Do it at a boundary, not mid-task, with `/wrap`.
+   When the user wants to continue in a fresh session, prepare and verify a handoff. Ask them to run `/clear` afterward.
+   Runtime hooks separately control any configured compaction interruption.
 
 ## Tiers
 
@@ -41,9 +36,8 @@ failures), breadth (6+ files edited), plan mode, or crossing the routine ceiling
 still inside the 25k grace band. It never auto-downgrades mid-session; a reset happens
 only at session start.
 
-At the ceiling the Stop hook **blocks once** and refuses to end the turn until the brief
-exists, so the ceiling is a gate rather than a suggestion. It fires once per crossing:
-if the model ignores it, the next stop is allowed and only a banner is shown.
+A ceiling is a reference point, not a limit. If a hook message asks for a handoff and
+work remains, follow it once with `/wrap`. If the work is done, say so.
 
 Ask with `ctx.ps1`:
 
@@ -60,7 +54,7 @@ If `CLAUDE_CONFIG_DIR` is set, substitute it for `~/.claude` in that path.
 ## Gears
 
 Session default is **high** and needs no skill. A gear costs one extra request, so
-the router only asks for one when it pays for itself.
+the router only asks for one on a clear signal.
 
 | Gear | When |
 |---|---|
@@ -68,14 +62,14 @@ the router only asks for one when it pays for itself.
 | `gear-medium` | light edits, docs |
 | *(high)* | default |
 | `gear-xhigh` | hard reasoning, or a failed attempt |
-| `gear-max` | a wrong answer costs more than a full turn; capped per session |
+| `gear-max` | a wrong answer would cost a full turn; capped per session |
 
 If the router injects `[tuner] gear=X`, invoke `/gear-X` as your first action.
 
 ## What not to do
 
-- Do not `/compact` at a task boundary; use `/wrap` + `/clear`.
-- Do not switch the main-thread model mid-session. It invalidates the prompt cache.
+- Do not suggest switching the main-thread model mid-session. The new model starts
+  without the prompt cache.
 - Do not read a large file "to get context". Grep for the symbol.
 - Do not restate the plan back to the user before acting on a mechanical turn.
 

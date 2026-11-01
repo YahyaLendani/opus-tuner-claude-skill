@@ -1,13 +1,13 @@
 # Architecture
 
-opus-tuner is six hooks, a small state file, and a set of CLI scripts. There is
-no daemon, no database, and no network access.
+opus-tuner is a set of hooks, small per-session state files, and CLI scripts. There
+is no daemon, no database, and no network access.
 
 ## Lifecycle
 
 ```
 session start
-    │  session-start.ps1   reset tier · re-seed brief · config and resume warnings
+    │  session-start.ps1   reset tier · load a claimed handoff · config and resume notes
     ▼
 user prompt
     │  route.ps1           classify → escalate tier → pick gear
@@ -16,17 +16,20 @@ tool calls
     │  post-tool.ps1      count consecutive failures; record edited files (async)
     ▼
 response ends
-    │  stop.ps1           70% warning · hard wrap at ceiling · grace escalation
+    │  stop.ps1           70% note · ceiling banner or optional prompt · grace escalation
     ▼
-   /wrap  →  brief written
-   /clear →  next session starts from the brief
+   /wrap  →  handoff drafted, filled in, verified
+   /clear →  session-end.ps1 claims it · the next session-start.ps1 loads it
 
-   /compact (any time) → pre-compact.ps1   log it · refuse the first manual one
+   /compact (any time) → pre-compact.ps1   log it · optionally refuse the first manual one
 ```
 
 The optional `PreToolUse` hook sits between the prompt and the tool call and can
-deny an unbounded `Read` at the ceiling. It is off unless installed with
-`-Enforce`.
+deny an unbounded `Read` at the ceiling. It takes both guard mode and an install
+with `-Enforce`.
+
+In monitor mode `route`, `post-tool` and `session-end` exit at once, and `stop` and
+`session-start` report to the user without adding anything to the model's context.
 
 ## Hook contracts
 
@@ -40,7 +43,8 @@ uses:
 | `prompt`, `permission_mode` | `route` — classification |
 | `stop_hook_active` | `stop` — loop protection |
 | `tool_name`, `tool_input` | `post-tool`, `pre-tool` |
-| `cwd`, `source` | `session-start` — where the brief lives |
+| `cwd`, `source` | `session-start` — which handoffs belong to this project |
+| `reason` | `session-end` — a `clear` claims the session's verified handoff |
 | `trigger` | `pre-compact` — `manual` or `auto` |
 | `seconds_since_last_response` | `session-start` — not used, but available on resume |
 
@@ -86,14 +90,13 @@ assertion for nested usage objects.
 
 ## State
 
-One JSON file per session: `~/.claude/state/tuner/<session_id>.json`.
+Two JSON files per session, under `~/.claude/state/tuner/`. `<session_id>.json` holds
+control state, which decides what a hook may do next:
 
 ```json
 {
   "tier": "routine",
   "gear": "high",
-  "files": ["C:/repo/src/auth.ts"],
-  "fails": 0,
   "maxUses": 0,
   "nudged": {
     "soft": false,
@@ -107,8 +110,6 @@ One JSON file per session: `~/.claude/state/tuner/<session_id>.json`.
 ```
 
 - `tier` is `routine` or `deep`. It only ever moves up.
-- `files` is capped at 60 entries; it drives the breadth signal (6+ files → deep).
-- `fails` counts consecutive tool failures, capped at 9.
 - `maxUses` rations `gear-max` per session.
 - `nudged` makes each banner fire once per crossing. `hardWrap` is the one-shot
   guard for the blocking Stop decision, `compact` the one-shot guard for the
@@ -116,16 +117,34 @@ One JSON file per session: `~/.claude/state/tuner/<session_id>.json`.
 - `updated` is written on every state change, which makes it a cheap liveness
   signal when checking that hooks are actually running.
 
-Missing keys are backfilled from `New-State` on read, so an old state file from a
-previous version keeps working.
+`<session_id>.diag.json` holds the optional counters the tool hooks collect:
+
+- `files` is capped at 60 entries; it drives the breadth signal (6+ files → deep).
+- `fails` counts consecutive tool failures, capped at 9.
+- `bigWarned` and `lowFailed` back the oversized-output note and the low-gear
+  switch-off.
+
+Missing keys are backfilled on read, so a state file from a previous version keeps
+working.
 
 ## Concurrency and failure
 
-`PostToolUse` is registered `async: true`, so it can run while the session
-continues. Several tool calls can finish at once, and `route`/`stop` can write the
-same file. `Write-State` uses `File.WriteAllText` with three retries 20 ms apart;
-the last writer wins. Losing one counter update is harmless; blocking a tool call
-is not.
+`PostToolUse` is registered `async: true`, so it can run while the session continues
+and finish after a later hook. Hence the two files: a late tool hook can lose a
+counter, but it never writes control state.
+
+`Update-State` holds a per-session lock file for its whole read-modify-write, and
+replaces the file through a temporary one. The merge on top is monotonic: a tier only
+rises, a flag only sets, a limit only grows, whatever the writers' order. A hook acts
+on a decision (a block, a note) only after the state recording it is safely on disk,
+so an interruption that cannot be recorded does not fire.
+
+A damaged state file is replaced with one that treats every one-time interruption
+as already used: missing a prompt is better than repeating one. Temp
+files older than a day and old lock and diagnostic files are pruned at startup.
+
+A hook that cannot get the lock within two seconds gives up and fails open, without
+acting on a decision it could not save.
 
 The decision log uses `File.AppendAllText`. Two simultaneous appends can lose a
 row. That is acceptable for a diagnostic log and much cheaper than locking.
