@@ -9,6 +9,9 @@ All notable changes are recorded here. This project follows
 
 - A handoff's Commands run list could name things that are not programs: the `1` from
   `2>&1`, the target of `>|`, and a quoted string such as `"---"`.
+- A session start racing another for one handoff could print nothing, losing its system
+  messages and profile note, when the handoff was taken while it was being listed. A
+  handoff that vanishes now counts as not waiting.
 
 ## [0.7.0] - 2026-11-01
 

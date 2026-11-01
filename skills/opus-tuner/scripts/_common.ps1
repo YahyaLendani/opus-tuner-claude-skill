@@ -839,7 +839,8 @@ function Get-WaitingHandoffs {
         $h = Read-Handoff $f.FullName
         if (-not $h -or $h['status'] -ne 'ready') { continue }
         if (-not (Test-SameProject $h['project'] $Cwd)) { continue }
-        if ((Get-HandoffAgeHours $f.FullName) -gt 24) { continue }
+        # A racing start may have just renamed it in Receive-Handoff.
+        try { if ((Get-HandoffAgeHours $f.FullName) -gt 24) { continue } } catch { continue }
         [void]$out.Add($h)
     }
     return , $out
