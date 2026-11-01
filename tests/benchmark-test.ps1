@@ -251,6 +251,23 @@ $status = ($rows | ForEach-Object { $_.status }) -join ','
 Check 'the run budget stops a run after the step that passed it' ($rows.Count -eq 2 -and $rows[0].status -eq 'budget-exceeded' -and @($rows[0].steps).Count -eq 1) $status
 Check 'the total budget stops later runs, and they are reported' ($rows.Count -eq 2 -and $rows[1].status -eq 'not-run') $status
 
+Write-Section 'a live run where nothing reached a model'
+# Found by running against the real CLI with an invalid key: every step failed and
+# no request was made, and the report still called it a live run.
+$dead = Join-Path $script:Sandbox 'dead'
+New-Item -ItemType Directory -Force -Path $dead | Out-Null
+$m = [System.IO.File]::ReadAllText((Join-Path $bad 'manifest.json')) | ConvertFrom-Json
+$m.live = $true
+[System.IO.File]::WriteAllText((Join-Path $dead 'manifest.json'), ($m | ConvertTo-Json -Depth 6), $script:Utf8)
+$deadRow = '{"task":"ledger-rules","arm":"default","repeat":1,"status":"failed","failedStep":"phase1","passed":false,"failedChecks":["x"],"tokens":{"input":0,"cacheRead":0,"cacheWrite":0,"output":0,"requests":0},"costUSD":0,"elapsedMs":10,"handoffOverhead":{"tokens":0},"rebuild":{"tokens":0},"interruptions":{"continuations":0,"stopPrompts":0,"blockedCompactions":0,"permissionDenials":0},"facts":{"total":0,"lost":[]},"repeatedLookups":0,"handoff":{}}'
+[System.IO.File]::WriteAllText((Join-Path $dead 'runs.jsonl'), $deadRow + "`n", $script:Utf8)
+$rep = Invoke-Ps (Join-Path $bench 'report.ps1') @('-Results', $dead)
+Check 'it is not presented as a live evaluation' ($rep.text -notmatch '\*\*Live run\*\*' -and $rep.text -match 'PENDING') $rep.text
+Check 'it says why' ($rep.text -match 'No run completed with a request') $rep.text
+Check 'routing stays pending' ($rep.text -match 'effort routing: \*\*pending\*\*') $rep.text
+$sum = [System.IO.File]::ReadAllText((Join-Path $dead 'summary.json')) | ConvertFrom-Json
+Check 'summary.json marks it pending' ($sum.pending -eq $true)
+
 Write-Section 'with no results'
 $empty = Join-Path $script:Sandbox 'nothing-here'
 New-Item -ItemType Directory -Force -Path $empty | Out-Null

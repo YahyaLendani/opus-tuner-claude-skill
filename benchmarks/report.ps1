@@ -55,16 +55,19 @@ if (Test-Path -LiteralPath $runsFile) {
     $runs = @([System.IO.File]::ReadAllLines($runsFile) | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
 }
 $isLive = ($manifest.live -eq $true)
+# A run that never reached a model is not evidence, however it was started.
+$hasEvidence = ($isLive -and @($runs | Where-Object { $_.status -eq 'completed' -and [int]$_.tokens.requests -gt 0 }).Count -gt 0)
 
 $md = New-Object System.Collections.ArrayList
 function Add-Line { param([string]$Text = '') [void]$md.Add($Text) }
 
 Add-Line '# Benchmark report'
 Add-Line ''
-if ($isLive) {
+if ($hasEvidence) {
     Add-Line "**Live run** of $($runs.Count) planned run(s). Costs are API-equivalent estimates at list prices, from pricing table $($manifest.pricingVersion)."
 } else {
-    Add-Line "**STUB DATA.** These runs used a stand-in for Claude Code, to test the harness. They say nothing about any arm."
+    if ($isLive) { Add-Line "**NO USABLE DATA.** No run completed with a request reaching a model. See the failures below." }
+    else { Add-Line "**STUB DATA.** These runs used a stand-in for Claude Code, to test the harness. They say nothing about any arm." }
     Add-Line ''
     Add-Line "**$pendingNote**"
 }
@@ -140,12 +143,12 @@ Add-Line ''
 Add-Line '## Effort routing and compaction blocking'
 Add-Line ''
 $armsRun = @($manifest.arms)
-if ($isLive -and $armsRun -contains 'tuner' -and $armsRun -contains 'tuner-no-routing') {
+if ($hasEvidence -and $armsRun -contains 'tuner' -and $armsRun -contains 'tuner-no-routing') {
     Add-Line 'To judge automatic effort routing, compare `tuner` with `tuner-no-routing` above.'
 } else {
     Add-Line 'Automatic effort routing: **pending**. It needs a live run with the `tuner` and `tuner-no-routing` arms.'
 }
-if ($isLive -and $armsRun -contains 'tuner' -and $armsRun -contains 'tuner-guard') {
+if ($hasEvidence -and $armsRun -contains 'tuner' -and $armsRun -contains 'tuner-guard') {
     Add-Line 'To judge compaction blocking and the Stop prompt, compare `tuner` with `tuner-guard` above, including their interruptions.'
 } else {
     Add-Line 'Compaction blocking and the Stop prompt: **pending**. They need a live run with the `tuner` and `tuner-guard` arms.'
@@ -153,7 +156,7 @@ if ($isLive -and $armsRun -contains 'tuner' -and $armsRun -contains 'tuner-guard
 
 $reportPath = Join-Path $Results 'report.md'
 [System.IO.File]::WriteAllText($reportPath, (($md -join "`n") + "`n"), $utf8)
-[System.IO.File]::WriteAllText((Join-Path $Results 'summary.json'), (([ordered]@{ live = $isLive; pending = (-not $isLive); cells = @($summary) }) | ConvertTo-Json -Depth 8), $utf8)
+[System.IO.File]::WriteAllText((Join-Path $Results 'summary.json'), (([ordered]@{ live = $isLive; pending = (-not $hasEvidence); cells = @($summary) }) | ConvertTo-Json -Depth 8), $utf8)
 $md -join "`n"
 "report written: $reportPath"
 exit 0

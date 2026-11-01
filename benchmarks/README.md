@@ -76,6 +76,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks/report.ps1
 Results go to `benchmarks/results/<time>/`, which git ignores: `manifest.json` (versions,
 model, seed, flags), `runs.jsonl` (one line per run), `report.md` and `summary.json`.
 
+## Checked against the real CLI
+
+On Claude Code 2.1.314 on Windows, with an invalid API key, so nothing reached a model:
+
+- The CLI accepted every flag the harness passes, and the failed runs were recorded and reported.
+- The tuner's hooks fired in print mode under an isolated `CLAUDE_CONFIG_DIR`, with the right
+  session id. The `default` arm got no tuner files.
+- A verified handoff was marked `.ended` when its session exited, and the next new session
+  took it through the startup path, with its text in that session's context.
+
+Still unproven, because they need a working model: `/wrap` driven by the model, real usage
+figures flowing through the audit, and `--max-budget-usd` stopping a real step.
+
 ## Limits of a run
 
 - **Print mode has no `/clear`.** After a handoff the harness starts a new session, which
