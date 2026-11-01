@@ -49,6 +49,11 @@ function Get-CommandPrograms {
         }
         if ($c -eq '"' -or $c -eq "'") { $quote = $c; [void]$sb.Append($c); continue }
         if ($c -eq ';' -or $c -eq '|' -or $c -eq '&') {
+            # 2>&1 and >| are redirections: what follows is a target, not a program.
+            if ($c -ne ';' -and $sb.Length -gt 0 -and ($sb[$sb.Length - 1] -eq '>' -or $sb[$sb.Length - 1] -eq '<')) {
+                [void]$sb.Append($c)
+                continue
+            }
             [void]$segments.Add($sb.ToString())
             [void]$sb.Clear()
             continue
@@ -67,8 +72,10 @@ function Get-CommandPrograms {
             # FOO=bar cmd: the assignment is an argument too, and a likely secret.
             if ($m.Groups[3].Success -and $m.Groups[3].Value -match '^[A-Za-z_][A-Za-z0-9_]*=') { continue }
             $token = "$($m.Groups[1].Value)$($m.Groups[2].Value)$($m.Groups[3].Value)"
+            # A quoted word on its own is text PowerShell prints; a quoted program is a path.
+            if (-not $m.Groups[3].Success -and $token -notmatch '[\\/]') { break }
             $name = ($token -split '[\\/]')[-1]
-            if ($name -match '^[A-Za-z0-9_.+-]{1,32}$' -and (Protect-Sensitive $name) -ceq $name) { [void]$out.Add($name) }
+            if ($name -match '^(?=.{1,32}$)[._]*[A-Za-z0-9][A-Za-z0-9_.+-]*$' -and (Protect-Sensitive $name) -ceq $name) { [void]$out.Add($name) }
             break
         }
     }

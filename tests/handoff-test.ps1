@@ -218,6 +218,30 @@ Check 'injection scrubs a hand-edited handoff' ($startS.text -match 'Resuming fr
 $everything = @(Get-ChildItem -LiteralPath $script:StateDir -Recurse -File | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
 Check 'no state file anywhere holds a secret' (@(Get-LeakedNames $everything).Count -eq 0) (@(Get-LeakedNames $everything) -join ',')
 
+# ---------- commands run ----------
+Write-Section 'the commands list names programs, not redirections or text'
+
+$sidP = 'cccccccc-0000-4000-8000-000000000006'
+$trP = New-TestTranscript -Project $projA -Sid $sidP -Files @((Join-Path $projA 'with-programs.ts')) -Commands @(
+    'tool-a --flag 2>&1',
+    'tool-b >&2',
+    'tool-c *>&1 | Out-String',
+    'tool-d >| clobbered-file.txt',
+    'tool-e &> all-output.log',
+    '"---"; tool-f',
+    "'plain-text'; tool-g",
+    '--- ; tool-h',
+    '& "C:\Program Files\Tool\tool-i.exe" --flag',
+    'tool-j && tool-k & tool-l'
+)
+$r = Invoke-Script 'brief.ps1' @('-SessionId', $sidP, '-Transcript', $trP, '-Project', $projA)
+$pathP = Get-HandoffFile $sidP
+$textP = if (Test-Path -LiteralPath $pathP) { [System.IO.File]::ReadAllText($pathP) } else { '' }
+$sectionP = [regex]::Match($textP, '(?s)## Commands run(.*?)(\z|\r?\n## )').Groups[1].Value
+$listedP = @([regex]::Matches($sectionP, '(?m)^- (\S+) \(\d+\)\s*$') | ForEach-Object { $_.Groups[1].Value } | Sort-Object)
+$wantedP = @('Out-String', 'tool-a', 'tool-b', 'tool-c', 'tool-d', 'tool-e', 'tool-f', 'tool-g', 'tool-h', 'tool-i.exe', 'tool-j', 'tool-k', 'tool-l' | Sort-Object)
+Check 'the commands list holds exactly the programs' (($listedP -join ',') -ceq ($wantedP -join ',')) "listed: $($listedP -join ', ')"
+
 # ---------- pick-up ----------
 Write-Section '/clear picks up the right handoff, once'
 
