@@ -5,6 +5,12 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A session start racing another for one handoff could print nothing, losing its system
+  messages and profile note, when the handoff was taken while it was being listed. A
+  handoff that vanishes now counts as not waiting.
+
 ## [0.7.1] - 2026-11-01
 
 ### Fixed

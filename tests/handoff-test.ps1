@@ -311,6 +311,41 @@ $raceResults = @($racers | ForEach-Object { Wait-ScriptProcess $_ })
 $winners = @($raceResults | Where-Object { $_.text -match 'Goal of RACE' }).Count
 Check 'racing starts inject a claim exactly once' ($winners -eq 1) "winners=$winners"
 
+# The losing start: a rival renames the handoff after this start listed it. Copies
+# of the scripts put the rename exactly between the listing and the age check. A
+# throw there would lose everything this start has to report.
+$sidV = 'abababab-0000-4000-8000-00000000000e'
+$trV = New-TestTranscript -Project $projB -Sid $sidV
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidV, '-Transcript', $trV, '-Project', $projB)
+Set-HandoffComplete (Get-HandoffFile $sidV) 'VANISH'
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidV, '-Verify')
+$null = Invoke-Hook 'session-end.ps1' @{ session_id = $sidV; cwd = $projB; hook_event_name = 'SessionEnd'; reason = 'clear'; transcript_path = $trV }
+$realScriptDir = $script:ScriptDir
+$script:ScriptDir = Join-Path $script:Sandbox 'scripts-with-rival'
+New-Item -ItemType Directory -Force -Path $script:ScriptDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $realScriptDir '_common.ps1'), (Join-Path $realScriptDir 'session-start.ps1') -Destination $script:ScriptDir
+$rival = @'
+
+$script:RealReadHandoff = ${function:Read-Handoff}
+function Read-Handoff {
+    param([string]$Path)
+    $h = & $script:RealReadHandoff $Path
+    if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Move($Path, "$Path.rival.taken") }
+    return $h
+}
+'@
+[System.IO.File]::AppendAllText((Join-Path $script:ScriptDir '_common.ps1'), $rival, $script:Utf8)
+Set-TestConfig '{"profile":"creative","mode":"not-a-mode"}'
+$r = Invoke-Hook 'session-start.ps1' @{ session_id = 'loser'; cwd = $projB; hook_event_name = 'SessionStart'; source = 'clear' }
+$script:ScriptDir = $realScriptDir
+Set-TestConfig '{}'
+Check 'the rival took the handoff' (-not (Test-Path -LiteralPath (Get-HandoffFile $sidV)))
+Check 'a vanished handoff keeps the profile note' ($r.text -match 'profile=creative') $r.text
+Check 'a vanished handoff keeps the system messages' ($r.text -match 'systemMessage' -and $r.text -match 'not-a-mode') $r.text
+Check 'a vanished handoff is not injected' ($r.text -notmatch 'Goal of VANISH') $r.text
+Check 'a vanished handoff is not waiting' ($r.text -notmatch 'handoff\(s\) wait') $r.text
+Get-ChildItem -LiteralPath (Join-Path $script:StateDir 'handoffs') -Filter "$sidV.*" -ErrorAction SilentlyContinue | Remove-Item -Force
+
 # ---------- startup and other sources ----------
 Write-Section 'other session sources'
 
