@@ -5,10 +5,14 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-01
+
 ### Fixed
 
 - A handoff's Commands run list could name things that are not programs: the `1` from
   `2>&1`, the target of `>|`, and a quoted string such as `"---"`.
+- The overlap tests could read a process's output before PowerShell had finished writing
+  it, which on `pwsh` could fail a correct run. It failed the racing-starts test on macOS.
 
 ## [0.7.0] - 2026-11-01
 
@@ -401,6 +405,7 @@ First public release.
   measured slower on the development machine; see the latency section.
 - Hooks fail open: any error exits 0 and lets Claude Code continue.
 
+[0.7.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.4.1...v0.6.1
 [0.4.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.4.0...v0.4.1
