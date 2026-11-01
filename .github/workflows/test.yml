@@ -1,4 +1,4 @@
-﻿name: test
+name: test
 
 on:
   push:
@@ -79,6 +79,10 @@ jobs:
         shell: powershell
         run: ./tests/modes-test.ps1 -Interpreter powershell
 
+      - name: Usage test
+        shell: powershell
+        run: ./tests/usage-test.ps1 -Interpreter powershell
+
       - name: Docs test
         shell: powershell
         run: ./tests/docs-test.ps1
@@ -117,6 +121,14 @@ jobs:
       - name: Modes test under pwsh
         shell: pwsh
         run: ./tests/modes-test.ps1 -Interpreter pwsh
+
+      - name: Usage test under pwsh
+        shell: pwsh
+        run: ./tests/usage-test.ps1 -Interpreter pwsh
+
+      - name: Docs test under pwsh
+        shell: pwsh
+        run: ./tests/docs-test.ps1
 
   posix:
     name: ${{ matrix.os }} (pwsh 7)
@@ -171,6 +183,10 @@ jobs:
       - name: Modes test
         shell: pwsh
         run: ./tests/modes-test.ps1 -Interpreter pwsh
+
+      - name: Usage test
+        shell: pwsh
+        run: ./tests/usage-test.ps1 -Interpreter pwsh
 
       - name: Docs test
         shell: pwsh

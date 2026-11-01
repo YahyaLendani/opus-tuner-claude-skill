@@ -1,0 +1,1 @@
+{ "type" : "assistant" , "uuid" : "space-1" , "requestId" : "req_space1" , "message" : { "id" : "msg_space1" , "model" : "claude-opus-4-8" , "usage" : { "input_tokens" : 200 , "cache_read_input_tokens" : 0 , "cache_creation_input_tokens" : 0 , "output_tokens" : 100 } } }

@@ -63,10 +63,10 @@ log instead.
 
 ## Context measurement
 
-`Get-ContextInfo` finds the **last** assistant `usage` block in the transcript and
-sums `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`. That
-sum is what the next request re-reads, which is what the ceiling is about — not
-`cache_read` alone.
+`Get-ContextInfo` finds the **last** main-thread assistant record in the transcript
+that reports tokens, and sums `input_tokens + cache_read_input_tokens +
+cache_creation_input_tokens`. That sum is what the next request re-reads, which is
+what the ceiling is about — not `cache_read` alone.
 
 Three details matter:
 
@@ -74,19 +74,23 @@ Three details matter:
   the file, seeks to `length - window`, and decodes UTF-8. It tries 128 KB, then
   512 KB, then 4 MB, because bookkeeping lines at the end can push the last usage
   block out of a smaller window.
-- **The text is scanned, not parsed.** One transcript line can be hundreds of KB;
-  `ConvertFrom-Json` on it costs ~200 ms in Windows PowerShell. A depth-counting
-  scan (string-aware, so braces inside message text cannot unbalance it) is an
-  order of magnitude cheaper.
-- **Only top-level members are summed.** A usage object nests `iterations`, which
-  repeats the same counts, and `cache_creation`, which breaks down
-  `cache_creation_input_tokens`. Summing every numeric match double-counts. The
-  parser cuts the block at the first nested `{` and reads the top-level keys.
+- **Lines are parsed, newest first.** `Read-UsageRecord` accepts only an assistant
+  record's own `message.usage`, so spacing, field order, nested `iterations` and
+  `cache_creation`, a `toolUseResult.usage` and usage quoted in message text cannot
+  change the answer. An earlier version scanned the raw text for this, and could
+  report a subagent's usage as the session's context.
+- **Parsing stays cheap.** One transcript line can be megabytes of tool output, and
+  `ConvertFrom-Json` over that is slow in Windows PowerShell. Strings too long to
+  matter, or holding an escape, are emptied first, and a text check skips lines
+  that cannot qualify. The usual case parses one record.
 
-That last point was a real bug in the first version of `audit.ps1`: every figure
-it reported was exactly 2× too high. It is the reason both the audit and the
-context reader share the same rule, and why `selftest.ps1` has a regression
-assertion for nested usage objects.
+`audit.ps1` reads every line with the same function, so the two cannot disagree
+about what a usage record is. It adds what a whole-file view needs: repeated records
+count once, and each request is priced by its own model. See
+[measuring.md](measuring.md).
+
+Prices are in `_pricing.ps1`, which only the audit and the benchmark report load.
+No hook needs a dollar figure, and each script a hook loads adds to its parse time.
 
 ## State
 

@@ -45,6 +45,7 @@ the defaults below.
 | `bigOutputTokens` / `bigOutputWarnings` | 6000 / 3 | note on one oversized tool result; cap per session |
 | `weeklyDigest` | true | one zero-token summary line per week at session start |
 | `autoTune` | true | switch the low gear off for 14 days when 40%+ of 5+ recent low-gear turns hit a failure |
+| `pricingFile` | (bundled) | another pricing table for `audit.ps1`, in the format of `references/pricing.json` |
 | `downshift` | true | `false` never picks `gear-low` |
 | `profile` | `dev` | `dev` or `creative`; applied after the keys above. See [configuration](../../docs/configuration.md#profiles) |
 | `profiles` | — | per-profile overrides |
@@ -212,8 +213,9 @@ hook is **~440–490 ms** end to end. Almost none of that is the tuner's own wor
 | first file read and regex use (the transcript tail) | ~100 ms |
 | state read/write, classification, decision append | ~30 ms |
 
-Once those engines are warm, the tuner's own work is ~20 ms: the same 512 KB tail
-read costs 9 ms on the second call inside one process, and `Find-LastUsage` 1 ms.
+Once those engines are warm, the tuner's own work is ~20 ms: `Get-ContextInfo` took
+3–14 ms a call on a 12 MB transcript, tail read and parsed record included, and
+~120 ms on the first call in a process, which is the warm-up in the table above.
 The rest is one-time warm-up that every PowerShell hook pays, and it cannot be
 avoided without a long-lived hook process, which Claude Code does not offer. This
 is also why the two JSON parses are not worth merging: parsing the config first

@@ -63,7 +63,7 @@ Write-Section 'names and paths match the code'
 $stale = [ordered]@{
     'old mode values in examples'  = '"mode":\s*"(advise|enforce)"|`(advise|enforce)` \(default\)|in `enforce` mode|enforce mode'
     'the shared handoff file'      = '\.claude[/\\]handoff\.md'
-    'removed functions'            = 'Write-State|Get-NewestTranscript'
+    'removed functions'            = 'Write-State|Get-NewestTranscript|Find-LastUsage'
     'six hooks'                    = '(?i)\bsix (hooks|hook events|wiring checks)\b|all six events'
 }
 foreach ($name in $stale.Keys) {

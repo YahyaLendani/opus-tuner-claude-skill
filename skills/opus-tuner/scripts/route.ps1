@@ -29,9 +29,8 @@ try {
         $ceiling = Get-Ceiling $cfg $tier
         $grace = [int64]$cfg['graceTokens']
 
-        # Did the previous low-gear turn pay? A failure during it means low effort
-        # likely caused rework, which costs more than the gear saved. One row per
-        # low turn lets session start switch the downshift off when it keeps
+        # Did the previous low-gear turn go well? A failure during it means low
+        # effort may have caused rework. One row per low turn lets session start switch the downshift off when it keeps
         # misfiring (see Update-AutoTune).
         if ([string]$state['gear'] -eq 'low') {
             $outcome = if ([bool]$state['lowFailed']) { 'low-failed' } else { 'low-ok' }

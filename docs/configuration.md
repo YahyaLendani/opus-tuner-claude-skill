@@ -30,6 +30,7 @@ If `CLAUDE_CONFIG_DIR` is set, the file is read from `$CLAUDE_CONFIG_DIR` instea
   "bigOutputWarnings": 3,
   "weeklyDigest": true,
   "autoTune": true,
+  "pricingFile": "",
   "mechanicalPatterns": "rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license",
   "bulkPatterns": "\\ball\\b|every|across|each file|multiple files|whole repo|whole project|codebase|batch|bulk|throughout"
 }
@@ -204,6 +205,7 @@ session.
 | `bigOutputWarnings` | 3 | most notes per session, so a session that needs big outputs is not nagged |
 | `weeklyDigest` | `true` | once every 7 days, the first fresh session start shows one line: gear switches and what they re-read, escalations, Stop prompts, compactions |
 | `autoTune` | `true` | switch the low gear off for 14 days when it keeps causing failures (below) |
+| `pricingFile` | `""` | another pricing table for `audit.ps1`, in the format of `references/pricing.json`. Empty uses the bundled one. A path that does not work gives no cost figure rather than different prices ([measuring.md](measuring.md)) |
 
 The output note covers `Bash`, `PowerShell`, `Read`, `Grep`, `Glob`, `WebFetch`
 and MCP tools. Edit results are skipped: they echo the original file, which the
@@ -219,7 +221,7 @@ context once; `weekly.ps1` has the full report.
 `low-ok` or `low-failed` (a tool failure during it). On a fresh start or
 `/clear`, if at least 5 such turns in the last 14 days were logged and 40% or more
 failed, the router stops choosing `gear-low` for 14 days, and you are told once,
-at zero tokens. Low effort that causes rework costs more than it saves, and
+at zero tokens. A failure during a low-gear turn is a sign of rework, and
 falling back to the default gear keeps the model at full strength. It never
 lowers a ceiling or picks a weaker gear on its own. The override lives in
 `state/tuner/autotune.json`; delete it to undo early, or set `"autoTune": false`.

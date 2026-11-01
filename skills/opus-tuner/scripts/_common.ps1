@@ -1,4 +1,4 @@
-﻿# Shared helpers for opus-tuner. Dot-source this from hook scripts.
+# Shared helpers for opus-tuner. Dot-source this from hook scripts.
 # Keep everything here allocation-light: these run on every tool call.
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +61,7 @@ function Get-TunerConfig {
         bigOutputWarnings     = 3
         weeklyDigest          = $true
         autoTune              = $true
+        pricingFile           = ''
         profile               = 'dev'
         profileNote           = ''
         deepPatterns          = 'refactor|architect|root cause|race condition|deadlock|migrat|redesign|flaky|intermittent|memory leak|concurren|thread-safe|vulnerab|rewrite|overhaul|regression'
@@ -196,7 +197,11 @@ function Get-HookInput {
     if ([string]::IsNullOrWhiteSpace($raw)) { return @{} }
     try {
         $o = ConvertTo-Hashtable ($raw | ConvertFrom-Json)
-        if ($o -is [System.Collections.IDictionary]) { return $o }
+        if ($o -is [System.Collections.IDictionary]) {
+            $e = $o['effort']
+            if ($e -is [System.Collections.IDictionary]) { $script:ObservedEffort = [string]$e['level'] }
+            return $o
+        }
         return @{}
     } catch { return @{} }
 }
@@ -525,74 +530,69 @@ function Read-FileTail {
     finally { if ($fs) { $fs.Dispose() } }
 }
 
-# Finds the last "usage" object in a block of text that reports a non-zero
-# token count. Returns @{ sum; index } or $null.
-#
-# A usage object is not flat: it nests "server_tool_use" and "cache_creation",
-# so a regex like \{.*?\} truncates it. Brute force instead: locate each
-# `"usage":{`, then walk forward with a depth counter (string-aware, so a brace
-# inside message text cannot unbalance it). Iterating backwards means the usual
-# case stops at the first candidate.
-function Find-LastUsage {
-    param([string]$Text)
-    if (-not $Text) { return $null }
+# Empties any string too long to matter, or holding an escape, before a line is
+# parsed. Short plain strings stay, which covers every field read below. A single
+# transcript line can be megabytes of tool output, and ConvertFrom-Json takes
+# hundreds of ms over that on PowerShell 5.1.
+$script:LongStringPattern = '"(?<keep>[^"\\]{0,255})"|"[^"\\]*(?:\\.[^"\\]*)*"'
+$script:UsageParseFailures = 0
 
-    $starts = New-Object System.Collections.ArrayList
-    foreach ($m in [regex]::Matches($Text, '"usage"\s*:\s*\{')) {
-        [void]$starts.Add($m.Index + $m.Length - 1)
-    }
-
-    for ($k = $starts.Count - 1; $k -ge 0; $k--) {
-        $start = [int]$starts[$k]
-        $depth = 0
-        $inStr = $false
-        $esc = $false
-        $end = -1
-
-        for ($j = $start; $j -lt $Text.Length; $j++) {
-            $c = $Text[$j]
-            if ($inStr) {
-                if ($esc) { $esc = $false }
-                elseif ($c -ceq '\') { $esc = $true }
-                elseif ($c -ceq '"') { $inStr = $false }
-                continue
-            }
-            if ($c -ceq '"') { $inStr = $true; continue }
-            if ($c -ceq '{') { $depth++ }
-            elseif ($c -ceq '}') {
-                $depth--
-                if ($depth -eq 0) { $end = $j; break }
-            }
-        }
-        if ($end -lt 0) { continue }
-
-        $block = $Text.Substring($start, $end - $start + 1)
-
-        # Only the top-level members count. A usage object repeats the same
-        # numbers inside a nested "iterations" array, so summing every match
-        # doubles the total. Every nested object begins at the first inner
-        # brace, and the top-level token keys precede it.
-        $cut = $block.IndexOf('{', 1)
-        $flat = if ($cut -gt 0) { $block.Substring(0, $cut) } else { $block }
-
-        $sum = [int64]0
-        foreach ($key in @('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens')) {
-            $km = [regex]::Match($flat, '"' + $key + '":(\d+)')
-            if (-not $km.Success) { $km = [regex]::Match($block, '"' + $key + '":(\d+)') }
-            if ($km.Success) { $sum += [int64]$km.Groups[1].Value }
-        }
-        if ($sum -gt 0) { return @{ sum = $sum; index = $start } }
-    }
-    return $null
+function ConvertTo-TokenCount {
+    param($Value)
+    $n = [int64]0
+    if ($null -ne $Value) { try { $n = [int64]$Value } catch { $n = [int64]0 } }
+    if ($n -lt 0) { return [int64]0 }
+    return $n
 }
 
-# Context size = input + cache_read + cache_creation of the last assistant
-# message. That sum is what the next request actually re-reads.
+# One transcript line as one request's usage, or $null when the line is anything
+# else. It is parsed rather than scanned, so spacing, field order, nested usage
+# objects and usage quoted in message text cannot change the answer: only an
+# assistant record's own message.usage counts, not a toolUseResult's. The text
+# checks only skip lines that cannot qualify. A line that should qualify but will
+# not parse is counted in $script:UsageParseFailures.
+function Read-UsageRecord {
+    param([string]$Line)
+    if ($Line.IndexOf('"usage"') -lt 0 -or $Line.IndexOf('"assistant"') -lt 0) { return $null }
+    $o = $null
+    try {
+        $o = [regex]::Replace($Line, $script:LongStringPattern, '"${keep}"') | ConvertFrom-Json
+    } catch {
+        # Emptying can leave duplicate blank keys, which 5.1 refuses.
+        try { $o = $Line | ConvertFrom-Json } catch {
+            $script:UsageParseFailures++
+            return $null
+        }
+    }
+    if ($null -eq $o -or [string]$o.type -cne 'assistant') { return $null }
+    $u = $o.message.usage
+    if ($null -eq $u) { return $null }
+    return @{
+        input          = ConvertTo-TokenCount $u.input_tokens
+        output         = ConvertTo-TokenCount $u.output_tokens
+        cacheRead      = ConvertTo-TokenCount $u.cache_read_input_tokens
+        cacheWrite     = ConvertTo-TokenCount $u.cache_creation_input_tokens
+        write5m        = ConvertTo-TokenCount $u.cache_creation.ephemeral_5m_input_tokens
+        write1h        = ConvertTo-TokenCount $u.cache_creation.ephemeral_1h_input_tokens
+        speed          = [string]$u.speed
+        geo            = [string]$u.inference_geo
+        model          = [string]$o.message.model
+        requestedModel = [string]$o.requestedModel
+        messageId      = [string]$o.message.id
+        requestId      = [string]$o.requestId
+        uuid           = [string]$o.uuid
+        isSidechain    = ($o.isSidechain -eq $true)
+        effort         = [string]$o.effort
+        perTurnEffort  = [string]$o.perTurnEffort
+    }
+}
+
+# Context size = input + cache_read + cache_creation of the last main-thread
+# assistant message. That sum is what the next request actually re-reads.
 #
-# Reads raw text rather than parsing lines as JSON: a single transcript line can
-# be hundreds of KB, and ConvertFrom-Json on it costs ~200 ms on PowerShell 5.1.
 # The window escalates because the newest lines in a transcript are bookkeeping,
-# which can push the last usage block out of the first window.
+# which can push the last usage block out of the first window. Walking from the
+# newest line means the usual case parses one record.
 function Get-ContextInfo {
     param([string]$TranscriptPath, [int]$Bytes = 524288)
     $result = @{ ctx = [int64]0; model = ''; found = $false }
@@ -601,18 +601,18 @@ function Get-ContextInfo {
         $text = Read-FileTail -Path $TranscriptPath -Bytes $window
         if (-not $text) { continue }
 
-        $hit = Find-LastUsage -Text $text
-        if (-not $hit) { continue }
-
-        $result.ctx = [int64]$hit.sum
-        $result.found = $true
-
-        $from = [Math]::Max(0, $hit.index - 4000)
-        $head = $text.Substring($from, $hit.index - $from)
-        $mm = [regex]::Matches($head, '"model":"([^"]+)"')
-        if ($mm.Count -gt 0) { $result.model = $mm[$mm.Count - 1].Groups[1].Value }
-
-        return $result
+        $lines = $text.Split([char]10)
+        for ($i = $lines.Length - 1; $i -ge 0; $i--) {
+            $rec = Read-UsageRecord -Line $lines[$i]
+            if ($null -eq $rec -or $rec.isSidechain) { continue }
+            $sum = $rec.input + $rec.cacheRead + $rec.cacheWrite
+            # A quota-error message ends a real transcript with an all-zero block.
+            if ($sum -le 0) { continue }
+            $result.ctx = [int64]$sum
+            $result.model = $rec.model
+            $result.found = $true
+            return $result
+        }
     }
     return $result
 }
@@ -956,9 +956,27 @@ function Remove-OldTunerFiles {
     }
 }
 
+$script:DecisionHeader = 'time,session,ctx,tier,gear,action,effective_effort'
+
+# Logs from before effective_effort get the column once. Their rows stay as they
+# are, and read back with it blank.
+function Update-DecisionHeader {
+    param([string]$Log)
+    $stream = [System.IO.File]::Open($Log, 'Open', 'Read', 'ReadWrite, Delete')
+    try {
+        $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding($false)))
+        $first = $reader.ReadLine()
+    } finally { $stream.Dispose() }
+    if ($null -eq $first -or $first -match 'effective_effort') { return }
+    $text = [System.IO.File]::ReadAllText($Log)
+    [void](Write-AtomicText $Log ($script:DecisionHeader + $text.Substring($first.Length)))
+}
+
 # One line per decision, not per prompt. Without this the bundle can only be
-# judged by its end effect on cost, weeks later; with it, "gears fired 40 times
-# and none of them paid" is answerable from a file. Rotates at 1 MB, keeps one.
+# judged by its end effect on cost, weeks later; with it, how often each gear
+# fired, and at what context size, is answerable from a file. `gear` is the effort
+# the router asked for. `effective_effort` is what Claude Code itself reported for
+# the turn, blank when it reported nothing. Rotates at 1 MB, keeps one.
 function Write-Decision {
     param($Config, [string]$SessionId, [int64]$Ctx, [string]$Tier, [string]$Gear, [string]$Action)
     if ($Config -and $Config.ContainsKey('logDecisions') -and -not [bool]$Config['logDecisions']) { return }
@@ -971,15 +989,19 @@ function Write-Decision {
         }
         $id = $SessionId
         if ($id.Length -gt 8) { $id = $id.Substring(0, 8) }
-        $line = '{0},{1},{2},{3},{4},{5}' -f (Get-Date).ToString('o'), $id, $Ctx, $Tier, $Gear, $Action
+        $effort = [string]$script:ObservedEffort
+        if (-not $effort) { $effort = [string]$env:CLAUDE_EFFORT }
+        $effort = $effort -replace '[^A-Za-z0-9_-]', ''
+        $line = '{0},{1},{2},{3},{4},{5},{6}' -f (Get-Date).ToString('o'), $id, $Ctx, $Tier, $Gear, $Action, $effort
         # One append, header included, instead of Test-Path plus two Add-Content
         # calls: this runs inside a blocking hook, and Add-Content costs ~17 ms a
         # call on Windows PowerShell. AppendAllText is ~1 ms.
         $enc = New-Object System.Text.UTF8Encoding($false)
         if (Test-Path -LiteralPath $log) {
+            Update-DecisionHeader $log
             [System.IO.File]::AppendAllText($log, $line + "`r`n", $enc)
         } else {
-            [System.IO.File]::AppendAllText($log, "time,session,ctx,tier,gear,action`r`n" + $line + "`r`n", $enc)
+            [System.IO.File]::AppendAllText($log, $script:DecisionHeader + "`r`n" + $line + "`r`n", $enc)
         }
     } catch { }
 }
@@ -989,7 +1011,7 @@ function Write-Decision {
 # only the decision log (no transcripts), so it stays cheap at session start.
 # Returns '' when it is not due, logging is off, or nothing happened.
 function Get-WeeklyDigest {
-    param($Config, [double]$CacheReadPerM = 1.50)
+    param($Config)
     try {
         if ($Config -and $Config.ContainsKey('logDecisions') -and -not [bool]$Config['logDecisions']) { return '' }
         if ($Config -and $Config.ContainsKey('weeklyDigest') -and -not [bool]$Config['weeklyDigest']) { return '' }
@@ -1009,20 +1031,20 @@ function Get-WeeklyDigest {
         # A gear switch is any prompt the router sent away from the default
         # gear: its own row ('gear-low'), or an escalation row that also chose one.
         $gearRows = @($rows | Where-Object { ($_.action -like 'gear-*') -or ($_.action -like 'escalate-*' -and $_.gear -and $_.gear -ne 'high') })
-        $gearCost = 0.0
-        foreach ($g in $gearRows) { $gearCost += ([double]$g.ctx / 1e6) * $CacheReadPerM }
+        $gearTokens = 0.0
+        foreach ($g in $gearRows) { $gearTokens += [double]$g.ctx }
         $escalations = @($rows | Where-Object { $_.action -like 'escalate-*' }).Count
         $wraps = @($rows | Where-Object { $_.action -eq 'hard-wrap' }).Count
         $compactions = @($rows | Where-Object { $_.action -eq 'compact-manual' -or $_.action -eq 'compact-auto' }).Count
 
-        return ("opus-tuner, last 7 days: {0} gear switch(es) costing ~`${1:0.00} in extra context re-reads, {2} deep escalation(s), {3} hard wrap(s), {4} compaction(s). Full report: weekly.ps1." -f $gearRows.Count, $gearCost, $escalations, $wraps, $compactions)
+        return ("opus-tuner, last 7 days: {0} gear switch(es) that re-read ~{1} of context, {2} deep escalation(s), {3} Stop prompt(s), {4} compaction(s). Full report: weekly.ps1." -f $gearRows.Count, (Format-Tokens $gearTokens), $escalations, $wraps, $compactions)
     } catch { return '' }
 }
 
 # Switch the low gear off for 14 days when it keeps misfiring. Each low-gear
 # turn logs 'low-ok' or 'low-failed' (a tool failure during it). With at least
-# 5 such turns in the last 14 days and 40% or more failed, low effort is causing
-# rework, which costs more than the gear saves, so the router stops choosing it.
+# 5 such turns in the last 14 days and 40% or more failed, low effort looks like
+# it is causing rework, so the router stops choosing it.
 # Only ever this direction: falling back to the default gear keeps the model at
 # full strength. Runs at session start; returns a message for the user, or ''.
 function Update-AutoTune {
@@ -1045,6 +1067,6 @@ function Update-AutoTune {
         $until = (Get-Date).AddDays($Days)
         $json = @{ downshiftOff = $true; until = $until.ToString('o'); reason = "$failed of $($rows.Count) low-gear turns hit a failure" } | ConvertTo-Json -Compress
         if (-not (Write-AtomicText (Get-AutoTunePath) $json)) { return '' }
-        return ("opus-tuner switched the low-effort gear off until {0}: {1} of {2} low-gear turns in the last {3} days hit a failure, and rework costs more than the gear saves. Set ""autoTune"": false in tuner.config.json to keep it on." -f $until.ToString('yyyy-MM-dd'), $failed, $rows.Count, $Days)
+        return ("opus-tuner switched the low-effort gear off until {0}: {1} of {2} low-gear turns in the last {3} days hit a failure. Set ""autoTune"": false in tuner.config.json to keep it on." -f $until.ToString('yyyy-MM-dd'), $failed, $rows.Count, $Days)
     } catch { return '' }
 }
