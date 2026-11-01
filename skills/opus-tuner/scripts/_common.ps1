@@ -186,7 +186,24 @@ function Get-StatePath {
     return (Join-Path $script:TunerState "$safe.json")
 }
 
+# Two files per session, because they have different owners. <sid>.json is control
+# state: the tier, the one-time flags and the effort limit decide whether a hook
+# interrupts anyone, so it only moves forward, and only under its lock.
+# <sid>.diag.json holds the counters the tool hooks collect. Those hooks run async
+# and can finish in any order, so a late one can lose a counter but can never
+# touch control state.
+$script:ControlKeys = @('tier', 'gear', 'maxUses', 'nudged', 'recovered', 'updated')
+$script:DiagKeys = @('files', 'fails', 'bigWarned', 'lowFailed')
+$script:NudgeFlags = @('soft', 'ceiling', 'escalated', 'hardWrap', 'compact', 'routeCeiling')
+
+function Get-DiagPath {
+    param([string]$SessionId)
+    return [System.IO.Path]::ChangeExtension((Get-StatePath $SessionId), 'diag.json')
+}
+
 function New-State {
+    $nudged = @{}
+    foreach ($k in $script:NudgeFlags) { $nudged[$k] = $false }
     return @{
         tier    = 'routine'
         gear    = 'high'
@@ -195,48 +212,254 @@ function New-State {
         maxUses = 0
         bigWarned = 0
         lowFailed = $false
-        nudged  = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false; routeCeiling = $false }
+        recovered = $false
+        nudged  = $nudged
         updated = ''
     }
 }
 
-function Read-State {
-    param([string]$SessionId)
-    $p = Get-StatePath $SessionId
-    if (-not (Test-Path -LiteralPath $p)) { return (New-State) }
-    try {
-        $s = ConvertTo-Hashtable (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json)
-        if (-not ($s -is [System.Collections.IDictionary])) { return (New-State) }
-        $d = New-State
-        foreach ($k in $d.Keys) {
-            if (-not $s.Contains($k)) { $s[$k] = $d[$k] }
-        }
-        if (-not ($s['nudged'] -is [System.Collections.IDictionary])) {
-            $s['nudged'] = @{ soft = $false; ceiling = $false; escalated = $false; hardWrap = $false; compact = $false; routeCeiling = $false }
-        }
-        foreach ($k in @('soft', 'ceiling', 'escalated', 'hardWrap', 'compact', 'routeCeiling')) {
-            if (-not $s['nudged'].Contains($k)) { $s['nudged'][$k] = $false }
-        }
-        return $s
-    } catch { return (New-State) }
+# What a damaged control file reads as. Its flags are unknowable, so assume every
+# one-time interruption already fired and every limit is spent: a repeated prompt
+# is the failure this file exists to prevent, and a missed one costs nothing.
+function New-RecoveredState {
+    $s = New-State
+    $s['tier'] = 'deep'
+    $s['maxUses'] = 99
+    $s['recovered'] = $true
+    foreach ($k in $script:NudgeFlags) { $s['nudged'][$k] = $true }
+    return $s
 }
 
-function Write-State {
-    param([string]$SessionId, $State)
-    $State['updated'] = (Get-Date).ToString('o')
-    $p = Get-StatePath $SessionId
-    $json = $State | ConvertTo-Json -Depth 8 -Compress
-    # post-tool.ps1 runs async and several tool calls can finish at once, so a
-    # concurrent writer can hold the file for a few milliseconds. Retrying beats
-    # silently dropping the counter update.
-    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+# status: ok, missing, bad (not a JSON object), busy (would not open). The name
+# gets a second look because a replace on Windows can hide it for an instant, and
+# "missing" is what a brand new session looks like.
+function Read-StateFile {
+    param([string]$Path)
+    $text = $null
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        if (-not [System.IO.File]::Exists($Path)) {
+            if ($attempt -ge 1) { return @{ status = 'missing' } }
+            Start-Sleep -Milliseconds 5
+            continue
+        }
         try {
-            [System.IO.File]::WriteAllText($p, $json, (New-Object System.Text.UTF8Encoding($false)))
-            return
-        } catch {
-            if ($attempt -lt 2) { Start-Sleep -Milliseconds 20 }
+            $text = Read-SharedText $Path
+            break
+        } catch { Start-Sleep -Milliseconds 15 }
+    }
+    if ($null -eq $text) { return @{ status = 'busy' } }
+    try { $data = ConvertTo-Hashtable ($text | ConvertFrom-Json) } catch { return @{ status = 'bad' } }
+    if (-not ($data -is [System.Collections.IDictionary])) { return @{ status = 'bad' } }
+    return @{ status = 'ok'; data = $data }
+}
+
+# Fills in what an older file lacks. $null when the flags cannot be trusted. Other
+# keys carry through: a session that spans the upgrade has its counters in here.
+function ConvertTo-ControlState {
+    param($Data)
+    $s = New-State
+    foreach ($k in $Data.Keys) { $s[$k] = $Data[$k] }
+    if (-not ($s['nudged'] -is [System.Collections.IDictionary])) { return $null }
+    $limit = 0
+    if (-not [int]::TryParse([string]$s['maxUses'], [ref]$limit)) { return $null }
+    foreach ($k in $script:NudgeFlags) {
+        if (-not $s['nudged'].Contains($k)) { $s['nudged'][$k] = $false }
+    }
+    return $s
+}
+
+function Add-Diagnostics {
+    param($View, [string]$SessionId)
+    $d = Read-StateFile (Get-DiagPath $SessionId)
+    if ($d['status'] -ne 'missing') {
+        $defaults = New-State
+        foreach ($k in $script:DiagKeys) {
+            if ($d['status'] -eq 'ok' -and $d['data'].Contains($k)) { $View[$k] = $d['data'][$k] } else { $View[$k] = $defaults[$k] }
         }
     }
+    # A counter that is not a number would make every hook reading it throw, and
+    # hooks fail silently, so the session would just stop being tracked.
+    foreach ($k in @('fails', 'bigWarned')) {
+        $n = 0
+        if (-not [int]::TryParse([string]$View[$k], [ref]$n)) { $View[$k] = 0 }
+    }
+}
+
+# One session's state as a read-only view. Atomic replaces make this safe without
+# the lock; changing anything goes through Update-State.
+function Read-State {
+    param([string]$SessionId)
+    if ([string]::IsNullOrWhiteSpace($SessionId)) { return (New-State) }
+    $r = Read-StateFile (Get-StatePath $SessionId)
+    $view = $null
+    if ($r['status'] -eq 'missing') { $view = New-State }
+    elseif ($r['status'] -eq 'ok') { $view = ConvertTo-ControlState $r['data'] }
+    if ($null -eq $view) { $view = New-RecoveredState }
+    Add-Diagnostics $view $SessionId
+    return $view
+}
+
+# Test seams, inert unless the overlap tests set OPUS_TUNER_TEST_BARRIER. They make
+# the interleavings in tests/state-test.ps1 deterministic rather than a matter of
+# timing: 'waiting' reports a contended lock, and the barrier parks an update
+# between its read and its write.
+function Set-TestSignal {
+    param([string]$Name)
+    if ($env:OPUS_TUNER_TEST_BARRIER) { [System.IO.File]::WriteAllText("$($env:OPUS_TUNER_TEST_BARRIER).$Name", '') }
+}
+
+function Wait-TestBarrier {
+    if (-not $env:OPUS_TUNER_TEST_BARRIER) { return }
+    Set-TestSignal 'reached'
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not [System.IO.File]::Exists("$($env:OPUS_TUNER_TEST_BARRIER).go") -and $sw.ElapsedMilliseconds -lt 15000) {
+        Start-Sleep -Milliseconds 10
+    }
+}
+
+# An exclusive handle on a lock file, or $null after the timeout. The OS releases
+# it when the holder dies, so a crashed hook cannot wedge a session. The file stays
+# after use: deleting it would let two processes each hold "the" lock.
+function Enter-StateLock {
+    param([string]$Path, [int]$TimeoutMs = 2000)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $signalled = $false
+    while ($true) {
+        try {
+            return (New-Object System.IO.FileStream($Path, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None))
+        } catch {
+            if (-not $signalled) {
+                Set-TestSignal 'waiting'
+                $signalled = $true
+            }
+            if ($sw.ElapsedMilliseconds -ge $TimeoutMs) { return $null }
+            Start-Sleep -Milliseconds 15
+        }
+    }
+}
+
+# Comparable text for one file's worth of keys, to skip writes that change nothing.
+function Get-StateSnapshot {
+    param($State, [string[]]$Keys)
+    $o = [ordered]@{}
+    foreach ($k in $Keys) {
+        if ($k -eq 'updated') { continue }
+        $v = $State[$k]
+        if ($v -is [System.Collections.IDictionary]) {
+            $n = [ordered]@{}
+            foreach ($x in @($v.Keys | Sort-Object)) { $n[$x] = $v[$x] }
+            $v = $n
+        }
+        $o[$k] = $v
+    }
+    return ($o | ConvertTo-Json -Depth 6 -Compress)
+}
+
+# The whole read-modify-write of one file, under that file's lock. $Action receives
+# the merged view and changes it in place; only the keys this file owns are saved.
+# Returns $true when the result is safely on disk. On $false nothing may be
+# announced as done: there was no session, no lock or no write, and a caller that
+# interrupted anyway could do so again next time.
+#
+# Scriptblocks see their caller's variables by name, so the st prefix below keeps
+# these locals from shadowing what an $Action reads.
+function Update-State {
+    param([string]$SessionId, [scriptblock]$Action, [switch]$Diagnostics)
+    if ([string]::IsNullOrWhiteSpace($SessionId)) { return $false }
+    $stFile = if ($Diagnostics) { Get-DiagPath $SessionId } else { Get-StatePath $SessionId }
+    $stLock = Enter-StateLock ([System.IO.Path]::ChangeExtension($stFile, 'lock'))
+    if (-not $stLock) { return $false }
+
+    $stSaved = $false
+    $stRecovered = $false
+    try {
+        if ($Diagnostics) {
+            $stKeys = $script:DiagKeys
+            $stOut = @{}
+            $stView = Read-State $SessionId
+        } else {
+            $stKeys = $script:ControlKeys
+            $stOut = @{}
+            $stRead = Read-StateFile $stFile
+            if ($stRead['status'] -eq 'busy') { return $false }
+            $stView = $null
+            if ($stRead['status'] -eq 'missing') { $stView = New-State }
+            elseif ($stRead['status'] -eq 'ok') {
+                $stView = ConvertTo-ControlState $stRead['data']
+                foreach ($k in $stRead['data'].Keys) { $stOut[$k] = $stRead['data'][$k] }
+            }
+            if ($null -eq $stView) {
+                $stView = New-RecoveredState
+                $stRecovered = $true
+            }
+            Add-Diagnostics $stView $SessionId
+        }
+
+        $stBefore = Get-StateSnapshot $stView $stKeys
+        $stDeep = ([string]$stView['tier'] -eq 'deep')
+        $stMax = [int]$stView['maxUses']
+        $stFlags = @{}
+        foreach ($k in $script:NudgeFlags) { $stFlags[$k] = [bool]$stView['nudged'][$k] }
+
+        $null = & $Action $stView
+
+        # Control state only moves forward. Reset-State is the one way back.
+        if ($stDeep) { $stView['tier'] = 'deep' }
+        if ([int]$stView['maxUses'] -lt $stMax) { $stView['maxUses'] = $stMax }
+        foreach ($k in $script:NudgeFlags) {
+            if ($stFlags[$k]) { $stView['nudged'][$k] = $true }
+        }
+
+        Wait-TestBarrier
+
+        if (-not $stRecovered -and (Get-StateSnapshot $stView $stKeys) -ceq $stBefore) {
+            $stSaved = $true
+        } else {
+            foreach ($k in $stKeys) { $stOut[$k] = $stView[$k] }
+            if (-not $Diagnostics) { $stOut['updated'] = (Get-Date).ToString('o') }
+            $stSaved = Write-AtomicText $stFile ($stOut | ConvertTo-Json -Depth 8 -Compress)
+        }
+    } finally { $stLock.Dispose() }
+
+    if ($stRecovered -and $stSaved) { Write-Decision (Get-TunerConfig) $SessionId 0 'deep' 'high' 'state-recovered' }
+    return $stSaved
+}
+
+# A session start is the one thing allowed to move control state back. A compaction
+# is the same session with a smaller context, so -KeepLimits keeps the once-per-session
+# limits: otherwise the manual /compact refusal and the gear-max ration would re-arm.
+function Reset-State {
+    param([string]$SessionId, [switch]$KeepLimits)
+    if ([string]::IsNullOrWhiteSpace($SessionId)) { return $false }
+    $file = Get-StatePath $SessionId
+    $lock = Enter-StateLock ([System.IO.Path]::ChangeExtension($file, 'lock'))
+    if (-not $lock) { return $false }
+    try {
+        $fresh = New-State
+        if ($KeepLimits) {
+            $read = Read-StateFile $file
+            $old = $null
+            if ($read['status'] -eq 'missing') { $old = New-State }
+            elseif ($read['status'] -eq 'ok') { $old = ConvertTo-ControlState $read['data'] }
+            if ($null -eq $old) { $old = New-RecoveredState }
+            $fresh['maxUses'] = [int]$old['maxUses']
+            $fresh['recovered'] = [bool]$old['recovered']
+            $fresh['nudged']['compact'] = [bool]$old['nudged']['compact']
+        }
+        $out = @{}
+        foreach ($k in $script:ControlKeys) { $out[$k] = $fresh[$k] }
+        $out['updated'] = (Get-Date).ToString('o')
+        if (-not (Write-AtomicText $file ($out | ConvertTo-Json -Depth 8 -Compress))) { return $false }
+    } finally { $lock.Dispose() }
+
+    $diag = Get-DiagPath $SessionId
+    $diagLock = Enter-StateLock ([System.IO.Path]::ChangeExtension($diag, 'lock'))
+    if ($diagLock) {
+        try {
+            if ([System.IO.File]::Exists($diag)) { [System.IO.File]::Delete($diag) }
+        } catch { } finally { $diagLock.Dispose() }
+    }
+    return $true
 }
 
 # Reads only the tail of a transcript. Transcripts reach 100+ MB; reading the
@@ -673,11 +896,23 @@ function Get-HandoffInjection {
     return $text
 }
 
-# Housekeeping for a directory that otherwise only grows. Runs on fresh starts.
-function Remove-OldHandoffFiles {
+# Housekeeping for directories that otherwise only grow. Runs on fresh starts. Only
+# files this bundle names: the decision log, baselines and reports are not touched.
+function Remove-OldTunerFiles {
+    $now = Get-Date
+    if (Test-Path -LiteralPath $script:TunerState) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $script:TunerState -File -ErrorAction SilentlyContinue)) {
+            $days = ($now - $f.LastWriteTime).TotalDays
+            $old = switch -Regex ($f.Name) {
+                '\.tmp$'               { $days -gt 1; break }
+                '\.(lock|diag\.json)$' { $days -gt 30; break }
+                default                { $false }
+            }
+            if ($old) { try { Remove-Item -LiteralPath $f.FullName -Force } catch { } }
+        }
+    }
     $dir = Get-HandoffDir
     if (-not (Test-Path -LiteralPath $dir)) { return }
-    $now = Get-Date
     foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Recurse -ErrorAction SilentlyContinue)) {
         $days = ($now - $f.LastWriteTime).TotalDays
         $old = switch -Regex ($f.Name) {
@@ -777,7 +1012,7 @@ function Update-AutoTune {
 
         $until = (Get-Date).AddDays($Days)
         $json = @{ downshiftOff = $true; until = $until.ToString('o'); reason = "$failed of $($rows.Count) low-gear turns hit a failure" } | ConvertTo-Json -Compress
-        [System.IO.File]::WriteAllText((Get-AutoTunePath), $json, (New-Object System.Text.UTF8Encoding($false)))
+        if (-not (Write-AtomicText (Get-AutoTunePath) $json)) { return '' }
         return ("opus-tuner switched the low-effort gear off until {0}: {1} of {2} low-gear turns in the last {3} days hit a failure, and rework costs more than the gear saves. Set ""autoTune"": false in tuner.config.json to keep it on." -f $until.ToString('yyyy-MM-dd'), $failed, $rows.Count, $Days)
     } catch { return '' }
 }

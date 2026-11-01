@@ -71,6 +71,10 @@ jobs:
         shell: powershell
         run: ./tests/handoff-test.ps1 -Interpreter powershell
 
+      - name: State test
+        shell: powershell
+        run: ./tests/state-test.ps1 -Interpreter powershell
+
       # Network, so it reports without blocking: a shields.io outage must not
       # fail a pull request, but a badge stuck on "no releases" should be seen.
       - name: Badges render
@@ -97,6 +101,10 @@ jobs:
       - name: Handoff test under pwsh
         shell: pwsh
         run: ./tests/handoff-test.ps1 -Interpreter pwsh
+
+      - name: State test under pwsh
+        shell: pwsh
+        run: ./tests/state-test.ps1 -Interpreter pwsh
 
   posix:
     name: ${{ matrix.os }} (pwsh 7)
@@ -143,6 +151,10 @@ jobs:
       - name: Handoff test
         shell: pwsh
         run: ./tests/handoff-test.ps1 -Interpreter pwsh
+
+      - name: State test
+        shell: pwsh
+        run: ./tests/state-test.ps1 -Interpreter pwsh
 
       - name: install.sh wrapper (executable, LF, passes switches)
         shell: bash

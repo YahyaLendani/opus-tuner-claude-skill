@@ -234,7 +234,7 @@ Check 'successful PowerShell call clears the counter' ([int]$st['fails'] -eq 0) 
 # This hook runs on every tool call, so a call that changes no signal must not
 # rewrite the state file. A failed assertion here means needless disk churn on
 # every Read and Grep.
-$statePath = Get-StatePath $sid3
+$statePath = Get-DiagPath $sid3
 $mtBefore = (Get-Item -LiteralPath $statePath).LastWriteTimeUtc
 Start-Sleep -Milliseconds 25
 $readEvt = (@{ session_id = $sid3; cwd = $sandbox; hook_event_name = 'PostToolUse'; tool_name = 'Read'; tool_input = @{ file_path = 'C:\x\a.ts' } } | ConvertTo-Json -Compress)
@@ -465,7 +465,7 @@ $env:OPUS_TUNER_CONFIG = $offCfg
 $sid = New-Sid
 Invoke-Hook 'post-tool.ps1' (@{ session_id = $sid; cwd = $sandbox; hook_event_name = 'PostToolUseFailure'; tool_name = 'Bash'; tool_input = @{ command = 'x' }; error = 'Exit code 1' } | ConvertTo-Json -Compress) | Out-Null
 $env:OPUS_TUNER_CONFIG = $script:BaseConfig
-Check 'mode off writes no state from tool calls' (-not (Test-Path -LiteralPath (Get-StatePath $sid)))
+Check 'mode off writes no state from tool calls' (-not (Test-Path -LiteralPath (Get-StatePath $sid)) -and -not (Test-Path -LiteralPath (Get-DiagPath $sid)))
 
 # ---------- profiles ----------
 Write-Host ''

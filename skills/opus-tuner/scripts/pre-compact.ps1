@@ -39,15 +39,24 @@ try {
 
     # One shot per session, like the hard wrap. A second /compact means the user
     # heard the reason and still wants it; refusing again would be a trap.
-    $willBlock = ($trigger -eq 'manual' -and $blockManual -and -not [bool]$state['nudged']['compact'])
+    $result = @{ block = $false }
+    if ($trigger -eq 'manual' -and $blockManual) {
+        $saved = Update-State $sid {
+            param($s)
+            if (-not [bool]$s['nudged']['compact']) {
+                $s['nudged']['compact'] = $true
+                $result['block'] = $true
+            }
+        }
+        # Not saved means the flag is not on disk: blocking now could repeat.
+        if (-not $saved) { $result['block'] = $false }
+    }
 
-    if (-not $willBlock) {
+    if (-not $result['block']) {
         Write-Decision $cfg $sid $ctx $tier $gear "compact-$trigger"
         exit 0
     }
 
-    $state['nudged']['compact'] = $true
-    Write-State $sid $state
     Write-Decision $cfg $sid $ctx $tier $gear 'compact-blocked'
 
     $where = if ($ctx -gt 0) {

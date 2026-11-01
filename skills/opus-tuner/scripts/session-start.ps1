@@ -26,16 +26,10 @@ try {
     # counters reset, but the once-per-session limits (the manual /compact
     # refusal and the gear-max ration) must not re-arm, or they stop being
     # once per session.
-    if (-not [string]::IsNullOrWhiteSpace($sid)) {
-        if ($source -eq 'compact') {
-            $old = Read-State $sid
-            $fresh = New-State
-            $fresh['maxUses'] = [int]$old['maxUses']
-            $fresh['nudged']['compact'] = [bool]$old['nudged']['compact']
-            Write-State $sid $fresh
-        } elseif ($source -ne 'resume' -and $source -ne 'fork') {
-            Write-State $sid (New-State)
-        }
+    if ($source -eq 'compact') {
+        $null = Reset-State $sid -KeepLimits
+    } elseif ($source -ne 'resume' -and $source -ne 'fork') {
+        $null = Reset-State $sid
     }
 
     $msgs = New-Object System.Collections.ArrayList
@@ -82,7 +76,7 @@ try {
     if (($source -eq 'resume' -or $source -eq 'fork') -and -not [string]::IsNullOrWhiteSpace($sid)) {
         Remove-HandoffMarkers $sid
     }
-    if ($source -eq 'startup') { Remove-OldHandoffFiles }
+    if ($source -eq 'startup') { Remove-OldTunerFiles }
 
     # Which handoff this start may load. /clear takes the one its own session
     # claimed on the way out. In the VS Code panel a new conversation often starts
