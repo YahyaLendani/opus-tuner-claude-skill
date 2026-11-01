@@ -14,6 +14,8 @@ $ErrorActionPreference = 'Stop'
 try {
     $cfg = Get-TunerConfig
     if ($cfg['mode'] -eq 'off') { exit 0 }
+    # Monitor reports to the user and adds nothing to the model's context.
+    $monitor = ([string]$cfg['mode'] -eq 'monitor')
 
     $in = Get-HookInput
     $sid = [string]$in['session_id']
@@ -41,6 +43,9 @@ try {
     if ($cfg.ContainsKey('profileInvalid')) {
         [void]$msgs.Add("tuner.config.json names an unknown profile '$($cfg['profileInvalid'])', so the dev profile is active. Known: dev, creative.")
     }
+    if ($cfg.ContainsKey('modeInvalid')) {
+        [void]$msgs.Add("tuner.config.json names an unknown mode '$($cfg['modeInvalid'])', so assist is active. Known: off, monitor, assist, guard.")
+    }
 
     # Once a week, on a fresh start, summarise what the tuner itself did and
     # what its gear switches cost. Each switch re-reads the whole context once,
@@ -54,21 +59,19 @@ try {
 
     # Automatic tuning, safe direction only: switch the low gear off when the
     # log shows it keeps causing failures. Checked on fresh starts and /clear.
-    if ($source -eq 'startup' -or $source -eq 'clear') {
+    if (-not $monitor -and ($source -eq 'startup' -or $source -eq 'clear')) {
         $tuned = Update-AutoTune $cfg
         if ($tuned) { [void]$msgs.Add($tuned) }
     }
 
-    # Resuming pays before the first new token: the next request re-reads the
-    # whole context. Reporting the estimate costs no model tokens.
+    # Resuming re-reads the whole context on the next request. Saying how large it
+    # is costs no model tokens.
     if ($source -eq 'resume' -or $source -eq 'fork') {
         $info = Get-ContextInfo -TranscriptPath ([string]$in['transcript_path'])
         $ceiling = Get-Ceiling $cfg 'routine'
         if ($info.found -and $info.ctx -ge $ceiling) {
-            # Opus cache-read rate, same table as audit.ps1. An estimate of the
-            # first request, not an invoice.
-            $cost = [Math]::Round(($info.ctx / 1e6) * 1.50, 2)
-            [void]$msgs.Add("resuming at $(Format-Tokens $info.ctx): the next request re-reads it (~`$$cost at Opus cache-read rates). If that work is finished, /wrap then /clear starts at about 500 tokens.")
+            $advice = if ($monitor) { '' } else { ' If that work is finished, /wrap then /clear starts a fresh session.' }
+            [void]$msgs.Add("resuming at $(Format-Tokens $info.ctx): the next request re-reads it.$advice")
         }
     }
 
@@ -88,7 +91,9 @@ try {
         $waiting = Get-WaitingHandoffs $cwd
         $picked = $null
         $ambiguous = $false
-        if ($source -eq 'clear') {
+        if ($monitor) {
+            # Announced below like any other handoff this start may not load.
+        } elseif ($source -eq 'clear') {
             $claims = Get-HandoffClaims $cwd
             if ($claims.Count -eq 1) {
                 $picked = $claims[0]
@@ -111,7 +116,8 @@ try {
 
         $paths = @($waiting | ForEach-Object { $_['path'] })
         if ($paths.Count -gt 0) {
-            $why = if ($ambiguous) { 'several sessions in this project were cleared at once, so none was loaded' }
+            $why = if ($monitor) { 'monitor mode does not load one automatically' }
+                   elseif ($ambiguous) { 'several sessions in this project were cleared at once, so none was loaded' }
                    else { 'only the session that wrote a handoff may load it automatically' }
             [void]$msgs.Add("$($paths.Count) handoff(s) wait for this project; $why. If one is yours, ask Claude to read it: $($paths -join ', ')")
         }
@@ -128,7 +134,7 @@ try {
     # it away, so it goes in on every source except those two.
     $context = New-Object System.Collections.ArrayList
     $note = [string]$cfg['profileNote']
-    if ($note -and $source -ne 'resume' -and $source -ne 'fork') { [void]$context.Add($note) }
+    if ($note -and -not $monitor -and $source -ne 'resume' -and $source -ne 'fork') { [void]$context.Add($note) }
     if ($body) { [void]$context.Add($body) }
 
     $out = @{}

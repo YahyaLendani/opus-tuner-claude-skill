@@ -84,6 +84,12 @@ function Add-Skip {
     [void]$script:checks.Add([pscustomobject]@{ check = $Name; ok = $true; skipped = $true; detail = $Detail })
 }
 
+# Worth knowing, not a fault: the install works, it just may not do what was meant.
+function Add-Note {
+    param([string]$Name, [string]$Detail = '')
+    [void]$script:checks.Add([pscustomobject]@{ check = $Name; ok = $true; note = $true; detail = $Detail })
+}
+
 function Get-HookPaths {
     param($Settings, [string]$Event)
     $out = New-Object System.Collections.ArrayList
@@ -311,7 +317,26 @@ if ($settings -and $settings.autoCompactWindow) {
     Add-Check 'deepTokens < autoCompactWindow' ($deep -lt [int64]$settings.autoCompactWindow) "$deep / $($settings.autoCompactWindow)"
 }
 
-Add-Check 'mode is a known value' (@('advise', 'enforce', 'off') -contains [string]$cfg['mode']) ([string]$cfg['mode'])
+$modeDetail = if ($cfg.ContainsKey('modeInvalid')) { "unknown '$($cfg['modeInvalid'])', running assist. Known: off, monitor, assist, guard" } else { [string]$cfg['mode'] }
+Add-Check 'mode is a known value' (-not $cfg.ContainsKey('modeInvalid')) $modeDetail
+
+# What can actually interrupt a session, since that takes two settings together.
+$interrupts = New-Object System.Collections.ArrayList
+foreach ($k in @('hardWrap', 'blockManualCompact')) {
+    $v = $cfg[$k]
+    if (-not ($v -is [bool])) {
+        Add-Note "$k must be true or false" "it is '$v', which counts as off"
+    } elseif ($v -and [string]$cfg['mode'] -ne 'off' -and [string]$cfg['mode'] -ne 'guard') {
+        Add-Note "$k has no effect in mode $($cfg['mode'])" 'interruptions need "mode": "guard"'
+    }
+}
+if (Test-Interruption $cfg 'hardWrap') { [void]$interrupts.Add('one Stop prompt at the ceiling') }
+if (Test-Interruption $cfg 'blockManualCompact') { [void]$interrupts.Add('one manual /compact block') }
+$interruptText = if ($interrupts.Count -gt 0) { $interrupts -join ', ' } else { 'none' }
+Add-Check "interruptions: $interruptText (mode $($cfg['mode']))" $true
+if ([string]$cfg['mode'] -eq 'guard' -and $interrupts.Count -eq 0) {
+    Add-Note 'guard mode has nothing configured' 'set "hardWrap": true and/or "blockManualCompact": true'
+}
 $profileDetail = if ($cfg.ContainsKey('profileInvalid')) { "unknown '$($cfg['profileInvalid'])', running dev" } else { [string]$cfg['profile'] }
 Add-Check 'profile is a known value' (-not $cfg.ContainsKey('profileInvalid')) $profileDetail
 
@@ -385,7 +410,7 @@ foreach ($c in $checks) {
     $group = switch -Regex ($c.check) {
         '^replay' { 'replay'; break }
         '^(settings|UserPromptSubmit|PostToolUse|PostToolUseFailure|Stop|SessionStart|PreCompact|PreToolUse|status|model|Opus)' { 'wiring'; break }
-        '^(routineTokens|deepTokens|mode|profile|tuner)' { 'configuration'; break }
+        '^(routineTokens|deepTokens|mode|profile|tuner|interruptions|hardWrap|blockManualCompact|guard mode)' { 'configuration'; break }
         '^skill' { 'skills'; break }
         '^all ' { 'scripts'; break }
         default { 'runtime' }
@@ -397,6 +422,8 @@ foreach ($c in $checks) {
     }
     if ($c.PSObject.Properties['skipped'] -and $c.skipped) {
         Write-Host ("  skip  {0}  {1}" -f $c.check, $c.detail) -ForegroundColor DarkGray
+    } elseif ($c.PSObject.Properties['note'] -and $c.note) {
+        Write-Host ("  note  {0}  {1}" -f $c.check, $c.detail) -ForegroundColor Yellow
     } elseif ($c.ok) {
         Write-Host ("  ok    {0}" -f $c.check) -ForegroundColor Green
     } else {
@@ -406,7 +433,7 @@ foreach ($c in $checks) {
 
 ''
 if ($fail -eq 0) {
-    $passed = $checks.Count - $skipped
+    $passed = $checks.Count - $skipped - @($checks | Where-Object { $_.PSObject.Properties['note'] -and $_.note }).Count
     $suffix = if ($skipped -gt 0) { ", $skipped skipped" } else { '' }
     Write-Host "healthy: $passed checks passed$suffix" -ForegroundColor Green
     if ($hookCount -eq 0) {

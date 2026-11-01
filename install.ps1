@@ -23,7 +23,7 @@
 param(
     # Replace skill folders that already exist (they are backed up first).
     [switch]$Force,
-    # Also register the optional PreToolUse Read guard (mode must be "enforce").
+    # Also register the optional PreToolUse Read guard (mode must be "guard").
     [switch]$Enforce,
     # Do not add the token-discipline block to CLAUDE.md.
     [switch]$SkipClaudeMd,
@@ -62,6 +62,7 @@ $claudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-
 $skillsDir = Join-Path $claudeDir 'skills'
 $settingsPath = Join-Path $claudeDir 'settings.json'
 $claudeMdPath = Join-Path $claudeDir 'CLAUDE.md'
+$configPath = Join-Path $claudeDir 'tuner.config.json'
 $backupDir = Join-Path (Join-Path $claudeDir 'state') 'opus-tuner-backups'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $nl = if ($OnWindows) { "`r`n" } else { "`n" }
@@ -218,11 +219,28 @@ if ($NoHooks) {
     }
 }
 
+# The user's settings, kept as an object so an upgrade can change one key and
+# leave the order and everything else as written.
+$configObject = $null
+$configBroken = $false
+if (Test-Path -LiteralPath $configPath) {
+    try { $configObject = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $configBroken = $true }
+    if (-not ($configObject -is [System.Management.Automation.PSCustomObject])) {
+        $configObject = $null
+        $configBroken = $true
+    }
+}
+$configMode = ''
+if ($configObject -and $configObject.PSObject.Properties['mode']) { $configMode = ([string]$configObject.mode).Trim().ToLowerInvariant() }
+
 $settings = @{}
+$hadOurHooks = $false
 if (-not $NoHooks) {
     if (Test-Path -LiteralPath $settingsPath) {
+        $settingsText = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8
+        $hadOurHooks = $settingsText -match 'opus-tuner[/\\]scripts[/\\]'
         try {
-            $settings = ConvertTo-Hashtable (Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+            $settings = ConvertTo-Hashtable ($settingsText | ConvertFrom-Json)
         } catch {
             throw "settings.json is not valid JSON; fix it before installing: $settingsPath"
         }
@@ -231,14 +249,22 @@ if (-not $NoHooks) {
     if (-not $settings.Contains('hooks')) { $settings['hooks'] = @{} }
     $hooks = $settings['hooks']
 
+    # Someone already using the read guard keeps it through an upgrade: re-running
+    # the installer without the original switch is not a choice to drop it.
+    $readGuardInUse = @(@($hooks['PreToolUse']) | Where-Object {
+        $_ -and ((@($_.hooks | ForEach-Object { [string]$_['command'] }) -join ' ') -match 'opus-tuner[/\\]scripts[/\\]pre-tool\.ps1')
+    }).Count -gt 0
+    $keepReadGuard = $readGuardInUse -and (@('guard', 'enforce') -contains $configMode)
+
     Set-OurHook $hooks 'UserPromptSubmit' (New-HookGroup 'route.ps1')
     Set-OurHook $hooks 'PostToolUse' (New-HookGroup 'post-tool.ps1' 'Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell|Read|Grep|Glob|WebFetch|mcp__.*' 10 -Async)
     Set-OurHook $hooks 'PostToolUseFailure' (New-HookGroup 'post-tool.ps1' '' 10 -Async)
     Set-OurHook $hooks 'Stop' (New-HookGroup 'stop.ps1')
     Set-OurHook $hooks 'SessionStart' (New-HookGroup 'session-start.ps1' 'startup|resume|clear|compact|fork' 15)
     Set-OurHook $hooks 'PreCompact' (New-HookGroup 'pre-compact.ps1' 'manual|auto')
-    if ($Enforce) {
+    if ($Enforce -or $keepReadGuard) {
         Set-OurHook $hooks 'PreToolUse' (New-HookGroup 'pre-tool.ps1' 'Read')
+        if (-not $Enforce) { Write-Host '  keep   the PreToolUse Read guard (already in use in guard mode)' }
     } else {
         Set-OurHook $hooks 'PreToolUse' $null
     }
@@ -294,7 +320,71 @@ if (-not $NoHooks) {
     }
 }
 
-# ---------- 3. CLAUDE.md ----------
+# ---------- 3. mode and interruptions ----------
+# Before 0.7 the Stop prompt and the manual /compact block were on unless switched
+# off. Now both have to be asked for. A setting someone chose keeps working, so it
+# moves to guard; a default nobody chose changes, and the user is told so here.
+if (-not $NoHooks) {
+    Write-Host ''
+    Write-Host 'mode and interruptions' -ForegroundColor Yellow
+    $turnOn = "to turn them on, set `"mode`": `"guard`" with `"hardWrap`": true and/or `"blockManualCompact`": true in $configPath"
+    $changedDefault = "before 0.7 the one-time Stop prompt and the first-/compact block were on by default. Now nothing interrupts a session unless asked; $turnOn"
+
+    $notes = New-Object System.Collections.ArrayList
+    $newMode = ''
+    $addKeys = @()
+    $isLegacyMode = @('', 'advise') -contains $configMode
+    if ($configObject) {
+        $named = @{}
+        foreach ($k in @('hardWrap', 'blockManualCompact')) {
+            if ($configObject.PSObject.Properties[$k]) { $named[$k] = $configObject.$k }
+        }
+        $chosen = @($named.Keys | Where-Object { $named[$_] -is [bool] -and $named[$_] })
+        if ($configMode -eq 'enforce') {
+            $newMode = 'guard'
+            $addKeys = @(@('hardWrap', 'blockManualCompact') | Where-Object { -not $named.ContainsKey($_) })
+            [void]$notes.Add('mode "enforce" is now called "guard". It no longer implies the interruptions, so any you had by default are now written out.')
+        } elseif ($isLegacyMode -and $chosen.Count -gt 0) {
+            $newMode = 'guard'
+            [void]$notes.Add("you set $($chosen -join ' and ') to true, which now only works in guard mode, so mode is now guard.")
+            foreach ($k in @('hardWrap', 'blockManualCompact')) {
+                if (-not $named.ContainsKey($k)) { [void]$notes.Add("$k was on by default and is now off; set `"$k`": true to keep it.") }
+            }
+        }
+    }
+
+    $installedEnd = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'session-end.ps1'
+    $scriptsCurrent = (Test-Path -LiteralPath $installedEnd) -or ($DryRun -and ($Force -or -not (Test-Path -LiteralPath (Join-Path $skillsDir 'opus-tuner'))))
+
+    if ($configBroken) {
+        Write-Host "  note   $configPath is not valid JSON, so it was left as it is. Hooks run on defaults until it is fixed." -ForegroundColor Yellow
+    } elseif ($newMode -and -not $scriptsCurrent) {
+        # Older scripts do not know the name guard, and would drop the read guard.
+        Write-Host "  note   mode stays `"$configMode`" for now: the installed scripts predate guard mode. Run with -Force to upgrade both." -ForegroundColor Yellow
+    } elseif ($newMode -and $DryRun) {
+        Write-Host "  would  set mode to $newMode in $configPath"
+        foreach ($k in $addKeys) { Write-Host "  would  set $k to true" }
+        foreach ($n in $notes) { Write-Host "  note   $n" -ForegroundColor Yellow }
+    } elseif ($newMode) {
+        Copy-Item -LiteralPath $configPath -Destination "$configPath.bak-$stamp" -Force
+        $configObject | Add-Member -NotePropertyName 'mode' -NotePropertyValue $newMode -Force
+        foreach ($k in $addKeys) { $configObject | Add-Member -NotePropertyName $k -NotePropertyValue $true -Force }
+        Write-JsonFile $configPath $configObject
+        Write-Host "  ok     backup $configPath.bak-$stamp"
+        Write-Host "  ok     mode is now $newMode"
+        foreach ($k in $addKeys) { Write-Host "  ok     $k is now true" }
+        foreach ($n in $notes) { Write-Host "  note   $n" -ForegroundColor Yellow }
+    } elseif ($isLegacyMode -and ($configObject -or $hadOurHooks)) {
+        Write-Host "  ok     mode assist"
+        Write-Host "  note   $changedDefault" -ForegroundColor Yellow
+    } elseif ($isLegacyMode) {
+        Write-Host "  ok     mode assist (default): nothing interrupts a session; $turnOn"
+    } else {
+        Write-Host "  keep   mode $configMode"
+    }
+}
+
+# ---------- 4. CLAUDE.md ----------
 Write-Host ''
 Write-Host 'CLAUDE.md' -ForegroundColor Yellow
 $begin = '<!-- opus-tuner:begin -->'
@@ -306,7 +396,7 @@ $begin
 - Grep before Read; bound reads with offset/limit.
 - A ``[tuner] gear=X`` line means invoke ``/gear-X`` first.
 - Send breadth (locating code, many files, suites) to a subagent; keep judgement local.
-- At a task boundary, or 70% of the tier ceiling: ``/wrap``, then tell the user to ``/clear``. Never ``/compact`` at a boundary.
+- When the user wants to continue in a fresh session, prepare and verify a handoff with ``/wrap``, then ask them to run ``/clear``.
 - Never trade verification for tokens.
 $end
 "@
@@ -314,12 +404,46 @@ $end
 # install does not write CRLF into CLAUDE.md.
 $block = $block -replace "`r`n", "`n"
 
+# Blocks earlier versions wrote. Only an exact match is ours to replace: anything
+# else has been edited, and those edits belong to the user.
+$knownBlocks = @(@(
+@'
+<!-- opus-tuner:begin -->
+# token discipline
+- Batch independent tool calls in one message; every turn re-reads all context.
+- Grep before Read; bound reads with offset/limit.
+- A `[tuner] gear=X` line means invoke `/gear-X` first.
+- Send breadth (locating code, many files, suites) to a subagent; keep judgement local.
+- At a task boundary, or 70% of the tier ceiling: `/wrap`, then tell the user to `/clear`. Never `/compact` at a boundary.
+- Never trade verification for tokens.
+<!-- opus-tuner:end -->
+'@
+) | ForEach-Object { $_ -replace "`r`n", "`n" })
+
 if ($SkipClaudeMd) {
     Write-Host '  skip   (-SkipClaudeMd)'
 } else {
     $existing = if (Test-Path -LiteralPath $claudeMdPath) { Get-Content -LiteralPath $claudeMdPath -Raw -Encoding UTF8 } else { '' }
     if ($existing -and $existing.Contains($begin)) {
-        Write-Host '  keep   block already present (edit it yourself, or remove it and re-run)'
+        $found = [regex]::Match($existing, '(?s)' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end))
+        $foundText = $found.Value -replace "`r`n", "`n"
+        if ($foundText -ceq $block) {
+            Write-Host '  keep   block already current'
+        } elseif ($found.Success -and $knownBlocks -ccontains $foundText) {
+            if ($DryRun) {
+                Write-Host '  would  update the token-discipline block'
+            } else {
+                $eol = if ($found.Value.Contains("`r`n")) { "`r`n" } else { "`n" }
+                Copy-Item -LiteralPath $claudeMdPath -Destination "$claudeMdPath.bak-$stamp" -Force
+                $updated = $existing.Substring(0, $found.Index) + ($block -replace "`n", $eol) + $existing.Substring($found.Index + $found.Length)
+                [System.IO.File]::WriteAllText($claudeMdPath, $updated, (New-Object System.Text.UTF8Encoding($false)))
+                Write-Host "  ok     backup $claudeMdPath.bak-$stamp"
+                Write-Host '  ok     token-discipline block updated'
+            }
+        } else {
+            Write-Host '  keep   block looks edited, so it was left as written' -ForegroundColor Yellow
+            Write-Host '  note   current wording for the handoff line: When the user wants to continue in a fresh session, prepare and verify a handoff with /wrap, then ask them to run /clear.' -ForegroundColor Yellow
+        }
     } elseif ($DryRun) {
         Write-Host '  would  append the token-discipline block'
     } else {
@@ -342,7 +466,7 @@ Write-Host '  1. restart Claude Code (or Developer: Reload Window in VS Code)'
 if ($NoHooks) {
     Write-Host '     advisory mode: no hooks were registered, so there is nothing to reload'
 } else {
-    Write-Host '  2. run /hooks  -> expect UserPromptSubmit, PostToolUse, PostToolUseFailure, Stop, SessionStart, PreCompact'
+    Write-Host '  2. run /hooks  -> expect UserPromptSubmit, PostToolUse, PostToolUseFailure, Stop, SessionStart, SessionEnd, PreCompact'
 }
 Write-Host "  3. run /skills -> expect $($skills -join ', ')"
 $verify = Join-Path (Join-Path (Join-Path $skillsDir 'opus-tuner') 'scripts') 'selftest.ps1'

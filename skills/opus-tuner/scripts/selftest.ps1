@@ -261,10 +261,19 @@ $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $large '' 'default' 'Stop')
 Check 'grace escalates instead of blocking' ($r.text -match 'escalated' -and $r.text -notmatch 'decision') $r.text
 
 $sid = New-Sid
+$r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
+Check 'by default the ceiling only shows the banner' ($r.text -notmatch '"decision"' -and $r.text -match 'systemMessage') $r.text
+
+# Interruptions are opt-in: guard mode plus the key for each one.
+$guardCfg = Join-Path $sandbox 'guard.json'
+[System.IO.File]::WriteAllText($guardCfg, '{"mode":"guard","hardWrap":true,"blockManualCompact":true}', (New-Object System.Text.UTF8Encoding($false)))
+$env:OPUS_TUNER_CONFIG = $guardCfg
+
+$sid = New-Sid
 Invoke-Hook 'route.ps1' (New-Payload $sid $large 'carry on') | Out-Null
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
 [void]$timings.Add([pscustomobject]@{ name = 'stop'; ms = $r.ms })
-Check 'ceiling blocks the stop' ($r.text -match '"decision":"block"') $r.text
+Check 'guard with hardWrap blocks the stop at the ceiling' ($r.text -match '"decision":"block"') $r.text
 Check 'block reason names /wrap and /clear' ($r.text -match '/wrap' -and $r.text -match '/clear') $r.text
 
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
@@ -281,12 +290,14 @@ Invoke-Hook 'route.ps1' (New-Payload $sid $over 'carry on') | Out-Null
 Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop') | Out-Null
 $r = Invoke-Hook 'stop.ps1' (New-Payload $sid $over '' 'default' 'Stop')
 Check 'ceiling seen by the router still shows the stop banner' ($r.text -match 'systemMessage' -and $r.text -match '/wrap') $r.text
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 
-# A config with hardWrap off must fall back to the old banner-only behaviour.
+# A config with hardWrap off must fall back to the banner-only behaviour.
 $noHard = Join-Path $sandbox 'nohard.json'
 # Fixtures come from the built-in defaults, never from a live install, so this
 # suite runs identically on a developer machine and in CI.
 $c = Get-TunerConfig -Defaults
+$c.mode = 'guard'
 $c.hardWrap = $false
 $c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $noHard -Encoding UTF8
 $env:OPUS_TUNER_CONFIG = $noHard
@@ -309,11 +320,16 @@ $sid = New-Sid
 $r = Invoke-Hook 'pre-compact.ps1' (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'auto' } | ConvertTo-Json -Compress)
 Check 'auto compaction is never blocked' ($r.text.Length -eq 0) $r.text
 
-# Manual compaction is pure waste below the ceiling, so it is refused once.
+$sid = New-Sid
+$r = Invoke-Hook 'pre-compact.ps1' (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'manual' } | ConvertTo-Json -Compress)
+Check 'by default a manual /compact is allowed' ($r.text.Length -eq 0) $r.text
+
+# In guard mode with the key on, the first manual compaction is refused once.
+$env:OPUS_TUNER_CONFIG = $guardCfg
 $sid = New-Sid
 $manual = (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreCompact'; trigger = 'manual' } | ConvertTo-Json -Compress)
 $r = Invoke-Hook 'pre-compact.ps1' $manual
-Check 'first manual /compact is blocked' ($r.text -match '"decision":"block"') $r.text
+Check 'first manual /compact is blocked in guard mode' ($r.text -match '"decision":"block"') $r.text
 Check 'compact reason names /wrap and /clear' ($r.text -match '/wrap' -and $r.text -match '/clear') $r.text
 
 # A refusal is not a compaction. One row, action=compact-blocked: otherwise
@@ -324,9 +340,11 @@ Check 'blocked /compact logs one blocked row' (@($mine | Where-Object { $_.actio
 
 $r = Invoke-Hook 'pre-compact.ps1' $manual
 Check 'second manual /compact is allowed' ($r.text.Length -eq 0) $r.text
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
 
 $noBlock = Join-Path $sandbox 'noblock.json'
 $c = Get-TunerConfig -Defaults
+$c.mode = 'guard'
 $c.blockManualCompact = $false
 $c | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $noBlock -Encoding UTF8
 $env:OPUS_TUNER_CONFIG = $noBlock
@@ -337,12 +355,17 @@ Check 'blockManualCompact off only logs' ($r.text.Length -eq 0) $r.text
 
 # ---------- 6. enforcement ----------
 Write-Host ''
-Write-Host 'enforcement (mode=advise)' -ForegroundColor Yellow
+Write-Host 'read guard' -ForegroundColor Yellow
 
 $sid = New-Sid
-$read = (@{ session_id = $sid; cwd = $sandbox; transcript_path = $large; hook_event_name = 'PreToolUse'; tool_name = 'Read'; tool_input = @{ file_path = 'C:\big.ts' } } | ConvertTo-Json -Compress)
+$read = (@{ session_id = $sid; cwd = $sandbox; transcript_path = $over; hook_event_name = 'PreToolUse'; tool_name = 'Read'; tool_input = @{ file_path = 'C:\big.ts' } } | ConvertTo-Json -Compress)
 $r = Invoke-Hook 'pre-tool.ps1' $read
-Check 'advise mode never blocks a read' ($r.text.Length -eq 0) $r.text
+Check 'assist mode never blocks a read' ($r.text.Length -eq 0) $r.text
+
+$env:OPUS_TUNER_CONFIG = $guardCfg
+$r = Invoke-Hook 'pre-tool.ps1' $read
+$env:OPUS_TUNER_CONFIG = $script:BaseConfig
+Check 'guard mode denies a bulk read at the ceiling' ($r.text -match '"permissionDecision":"deny"') $r.text
 
 # ---------- 6. handoff ----------
 Write-Host ''

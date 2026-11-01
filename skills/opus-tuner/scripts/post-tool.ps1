@@ -27,8 +27,9 @@ function Measure-TextChars {
 
 try {
     $cfg = Get-TunerConfig
-    # mode: off is documented as silent, which includes not writing state.
-    if ($cfg['mode'] -eq 'off') { exit 0 }
+    # mode: off is documented as silent, which includes not writing state. These
+    # counters only feed the router and notes to the model, which monitor does not use.
+    if (@('off', 'monitor') -contains $cfg['mode']) { exit 0 }
 
     $in = Get-HookInput
     $sid = [string]$in['session_id']

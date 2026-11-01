@@ -7,7 +7,8 @@ $ErrorActionPreference = 'Stop'
 
 try {
     $cfg = Get-TunerConfig
-    if ($cfg['mode'] -eq 'off') { exit 0 }
+    # Everything this hook produces is advice to the model, which monitor leaves out.
+    if (@('off', 'monitor') -contains $cfg['mode']) { exit 0 }
 
     $in    = Get-HookInput
     $sid   = [string]$in['session_id']
@@ -74,17 +75,18 @@ try {
         $notes = New-Object System.Collections.ArrayList
         $gear = 'high'
 
-        # 1. Hard ceiling wins over everything: tell the model to wrap, not to work.
+        # 1. The ceiling wins over everything: no tier or gear change, one note.
         #    Said once per crossing. Repeating it on every prompt would add the same
-        #    ~70 tokens to a context that is already at its most expensive; after
-        #    the first time, the Stop hook's block and the status line carry it.
+        #    tokens to a context that is already at its largest; after the first
+        #    time, the Stop banner and the status line carry it.
         #    Own flag, not nudged.ceiling: that one belongs to stop.ps1, and setting
         #    it here would suppress the user-facing /wrap banner at the next stop.
         if ($ctx -ge $ceiling) {
             if (-not [bool]$state['nudged']['routeCeiling']) {
                 $state['nudged']['routeCeiling'] = $true
                 [void]$result['rows'].Add(@($tier, $gear, 'ceiling'))
-                $result['context'] = "[tuner] ctx $(Format-Tokens $ctx) is at the $tier ceiling ($(Format-Tokens $ceiling)). Stop starting new work. Run /wrap, then tell the user to /clear. The Stop hook blocks one stop at this ceiling, so write the brief now."
+                $result['context'] = "[tuner] ctx $(Format-Tokens $ctx) is at the $tier ceiling ($(Format-Tokens $ceiling)). If the user wants to continue in a fresh session, prepare and verify a handoff with /wrap, then ask them to run /clear."
+                if (Test-Interruption $cfg 'hardWrap') { $result['context'] += ' A one-time Stop prompt will ask for this at the next stop.' }
             }
             return
         }

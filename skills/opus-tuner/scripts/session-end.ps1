@@ -10,7 +10,8 @@ $ErrorActionPreference = 'Stop'
 
 try {
     $cfg = Get-TunerConfig
-    if ($cfg['mode'] -eq 'off') { exit 0 }
+    # The markers only let the next session load a handoff, which monitor never does.
+    if (@('off', 'monitor') -contains $cfg['mode']) { exit 0 }
 
     $in = Get-HookInput
     $sid = [string]$in['session_id']

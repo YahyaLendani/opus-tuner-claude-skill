@@ -45,7 +45,7 @@ function ConvertTo-Hashtable {
 function Get-TunerConfig {
     param([switch]$Defaults)
     $cfg = @{
-        mode                  = 'advise'
+        mode                  = 'assist'
         routineTokens         = 150000
         deepTokens            = 250000
         graceTokens           = 25000
@@ -53,7 +53,8 @@ function Get-TunerConfig {
         maxTurnsPerSession    = 2
         minCtxForDownshift    = 100000
         downshiftRequiresBulk = $true
-        hardWrap              = $true
+        hardWrap              = $false
+        blockManualCompact    = $false
         logDecisions          = $true
         downshift             = $true
         bigOutputTokens       = 6000
@@ -70,12 +71,16 @@ function Get-TunerConfig {
         mechanicalPatterns    = 'rename|format|lint|prettier|eslint|typo|bump|commit|git status|run tests|run the tests|npm test|chmod|move file|copy file|list files|add header|add license'
         bulkPatterns          = '\ball\b|every|across|each file|multiple files|whole repo|whole project|codebase|batch|bulk|throughout'
     }
+    $named = @{}
     if (-not $Defaults -and (Test-Path -LiteralPath $script:TunerConfig)) {
         try {
             $raw = Get-Content -LiteralPath $script:TunerConfig -Raw -Encoding UTF8
             $parsed = ConvertTo-Hashtable ($raw | ConvertFrom-Json)
             if ($parsed -is [System.Collections.IDictionary]) {
-                foreach ($k in $parsed.Keys) { $cfg[$k] = $parsed[$k] }
+                foreach ($k in $parsed.Keys) {
+                    $cfg[$k] = $parsed[$k]
+                    $named[$k] = $true
+                }
             }
         } catch { }
     }
@@ -93,8 +98,28 @@ function Get-TunerConfig {
     foreach ($k in $profiles[$name].Keys) { $cfg[$k] = $profiles[$name][$k] }
     $custom = $cfg['profiles']
     if ($custom -is [System.Collections.IDictionary] -and $custom[$name] -is [System.Collections.IDictionary]) {
-        foreach ($k in $custom[$name].Keys) { $cfg[$k] = $custom[$name][$k] }
+        foreach ($k in $custom[$name].Keys) {
+            $cfg[$k] = $custom[$name][$k]
+            $named[$k] = $true
+        }
     }
+
+    # monitor shows numbers, assist also advises, guard also fires the interruptions
+    # its keys turn on. advise and enforce are the names from before 0.7, and enforce
+    # also meant both interruptions, which were then on unless switched off.
+    $modeName = ([string]$cfg['mode']).Trim().ToLowerInvariant()
+    if ($modeName -eq 'advise') {
+        $modeName = 'assist'
+    } elseif ($modeName -eq 'enforce') {
+        $modeName = 'guard'
+        foreach ($k in @('hardWrap', 'blockManualCompact')) {
+            if (-not $named.ContainsKey($k)) { $cfg[$k] = $true }
+        }
+    } elseif (@('off', 'monitor', 'assist', 'guard') -notcontains $modeName) {
+        if ($modeName) { $cfg['modeInvalid'] = $modeName }
+        $modeName = 'assist'
+    }
+    $cfg['mode'] = $modeName
 
     # An automatic switch-off from Update-AutoTune, applied last and only while
     # it lasts. It only ever turns the low gear off, never a ceiling down.
@@ -103,6 +128,13 @@ function Get-TunerConfig {
         if ($auto) { $cfg['downshift'] = $false; $cfg['autoDownshiftOffUntil'] = $auto['until'] }
     }
     return $cfg
+}
+
+# Whether a one-time interruption may fire. It takes guard mode and a real JSON
+# true: PowerShell would read the string "false" as true.
+function Test-Interruption {
+    param($Config, [string]$Key)
+    return ([string]$Config['mode'] -eq 'guard' -and $Config[$Key] -is [bool] -and $Config[$Key])
 }
 
 function Get-AutoTunePath { return (Join-Path $script:TunerState 'autotune.json') }
