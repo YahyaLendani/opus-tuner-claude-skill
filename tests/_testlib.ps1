@@ -120,7 +120,9 @@ function Start-ScriptProcess {
 
 function Wait-ScriptProcess {
     param($Started, [int]$TimeoutMs = 60000)
-    [void]$Started.process.WaitForExit($TimeoutMs)
+    # Off Windows, Start-Process copies the output to the file as it arrives. The
+    # timed overload can return before that is done; the plain one waits for it.
+    if ($Started.process.WaitForExit($TimeoutMs)) { $Started.process.WaitForExit() }
     $text = ''
     if (Test-Path -LiteralPath $Started.out) { $text = [System.IO.File]::ReadAllText($Started.out).Trim() }
     return @{ text = $text; code = $Started.process.ExitCode }

@@ -11,6 +11,8 @@ All notable changes are recorded here. This project follows
 
 - A handoff's Commands run list could name things that are not programs: the `1` from
   `2>&1`, the target of `>|`, and a quoted string such as `"---"`.
+- The overlap tests could read a process's output before PowerShell had finished writing
+  it, which on `pwsh` could fail a correct run. It failed the racing-starts test on macOS.
 
 ## [0.7.0] - 2026-11-01
 
