@@ -48,10 +48,10 @@ try {
     }
 
     # Once a week, on a fresh start, summarise what the tuner itself did and
-    # what its gear switches cost. Each switch re-reads the whole context once,
-    # so its price is known from the logged context size; whether the effort
-    # change bought that back is what the full weekly report helps judge. The
-    # summary rides on systemMessage, so it costs no model tokens.
+    # how much context its gear switches re-read. Each switch re-reads the whole
+    # context once, so that figure comes from the logged context size. Whether
+    # the effort change was worth it takes a measurement this summary cannot make.
+    # The summary rides on systemMessage, so it costs no model tokens.
     if ($source -eq 'startup') {
         $digest = Get-WeeklyDigest $cfg
         if ($digest) { [void]$msgs.Add($digest) }

@@ -204,3 +204,57 @@ silently deleting wiring the user did not ask to remove is worse than a stale
 hook. The portable skill is one more folder to keep aligned with the scripts; the
 `CLAUDE.md` block and `SKILL.md` are the two places where a rules change must be
 mirrored.
+
+## 15. A handoff belongs to one session, or it is not written
+
+**Context.** The handoff was one shared file, and the writer fell back to the newest
+transcript across all projects. Two concurrent sessions could overwrite or consume each
+other's work, and one could pick up a brief about a different project.
+
+**Decision.** The session id, transcript and project are passed explicitly, and each
+handoff is its own file. If the session cannot be identified, the writer reports that
+and stops. A new session takes a handoff only when it is certain whose it is. When
+several could apply, it announces them and injects none.
+
+**Consequence.** A handoff is occasionally not picked up automatically and has to be
+named. That is a nuisance a person can see, and a wrong brief is a mistake they cannot.
+
+## 16. Control state and diagnostics do not share a fate
+
+**Context.** Hooks overlap, and asynchronous ones finish late. A last-writer-wins file let
+a stale update reverse a tier, or clear the flag that stops a one-time prompt repeating.
+
+**Decision.** Tier changes, one-time flags and effort limits are control state, updated
+under a cross-process lock with atomic replacement, and a stale update cannot move them
+backwards. Counters live in a separate diagnostics file, and the late hooks write only
+there. A damaged state file recovers without re-enabling an interruption that has fired.
+
+**Consequence.** Diagnostic counters can undercount under contention, and a hook that
+cannot get the lock in time gives up without acting. Both are the right way round: nothing
+is decided from a counter, and a missed prompt is better than a repeated one.
+
+## 17. Costs are estimates, per request, with their sources shown
+
+**Context.** One rate applied to a whole session gave one precise-looking number that was
+wrong for mixed models, and rates baked into a script go stale without notice.
+
+**Decision.** Each request is priced at its own model from a versioned table that can be
+replaced. An unknown model stays unknown and is counted, so no number is invented for it.
+Every figure is labelled an API-equivalent estimate, which is neither billing nor a
+subscription limit.
+
+**Consequence.** Totals can be partial, and the report says so. The table needs updating
+when prices change, and its version travels with each result.
+
+## 18. Evidence decides what stays
+
+**Context.** Automatic effort routing and compaction blocking both have a maintenance and
+execution cost. Reasoning about them is not a measurement.
+
+**Decision.** `benchmarks/` compares them on equal terms, as separate arms. Nothing is
+claimed until a live run is recorded, and failures are reported beside successes. Blocking
+stays off by default in the meantime, since it interrupts people and has no evidence behind it.
+
+**Consequence.** Routing stays on in assist mode for now because it is existing behaviour,
+not because it has been shown to help. **That question is still open:** see
+[benchmarks/README.md](../benchmarks/README.md).

@@ -1,0 +1,28 @@
+{
+  "id": "ledger-rules",
+  "title": "A bug fix, then a feature that must follow rules set earlier",
+  "steps": [
+    {
+      "id": "phase1",
+      "kind": "work",
+      "prompt": "Get-Total in src/ledger.ps1 gets refunds wrong: a refund should reduce the total. Fix it, and confirm with tests/run-tests.ps1.\n\nTwo rules for all work on this repo from now on: every amount stays in whole integer cents, never a decimal or floating-point type; and new functions go in src/ledger.ps1, not in new files.\n\nWe also decided that an unknown entry kind must throw rather than be ignored, so make Get-Total do that. More work is coming after this."
+    },
+    { "kind": "continuation" },
+    {
+      "id": "recall",
+      "kind": "recall",
+      "prompt": "Before continuing: from what you already know, without opening any project file other than your own notes, list the rules I set for this repo, the decision about unknown entry kinds, and what has been verified so far.",
+      "facts": [
+        { "id": "integer-cents", "pattern": "(?i)cents", "sample": "Amounts stay in whole integer cents." },
+        { "id": "same-file", "pattern": "(?i)src[/\\\\]ledger\\.ps1|new files?", "sample": "New functions go in src/ledger.ps1." },
+        { "id": "unknown-throws", "pattern": "(?i)throw|exception|raises? an error", "sample": "An unknown kind must throw." },
+        { "id": "tests-run", "pattern": "(?i)run-tests|tests? pass", "sample": "tests/run-tests.ps1 passes." }
+      ]
+    },
+    {
+      "id": "phase2",
+      "kind": "work",
+      "prompt": "Now add Get-Balance -Entries <entries> -Account <name>, which totals one account's entries the way Get-Total does. Also add Format-Amount -Cents <n>, returning text such as 12.34, or -1.50 for a negative amount. Follow the rules for this repo. Add tests for both to tests/run-tests.ps1 and run them."
+    }
+  ]
+}

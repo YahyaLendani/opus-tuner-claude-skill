@@ -225,7 +225,7 @@ Where it lands:
 
 | Hook | Blocking? | Measured | Frequency |
 |---|---|---|---|
-| `route.ps1` | yes | ~450–490 ms | once per prompt |
+| `route.ps1` | yes | ~450–560 ms | once per prompt |
 | `stop.ps1` | yes | ~440–460 ms | once per response |
 | `statusline.ps1` | UI only | ~330–360 ms | per message |
 | `post-tool.ps1` | **no** (`async: true`) | ~310–360 ms | per tool call |

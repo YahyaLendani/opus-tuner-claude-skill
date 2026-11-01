@@ -1,0 +1,28 @@
+{
+  "id": "timeout-migration",
+  "title": "A multi-file migration with a part that must not be touched",
+  "steps": [
+    {
+      "id": "phase1",
+      "kind": "work",
+      "prompt": "We are moving off Read-LegacyTimeout to Get-Setting 'timeoutSec' (src/settings.ps1 has it). Migrate src/api.ps1, src/cache.ps1 and src/db.ps1 for now.\n\nRules for this migration: never edit anything under src/vendor/, it is third-party code. Keep each module's function names as they are.\n\nWe decided that src/legacy.ps1 stays, because src/vendor/client.ps1 still depends on it. I will ask for the rest of the modules next."
+    },
+    { "kind": "continuation" },
+    {
+      "id": "recall",
+      "kind": "recall",
+      "prompt": "Before continuing: from what you already know, without opening any project file other than your own notes, list the rules for this migration, the decision about src/legacy.ps1 and why, and which modules are done and which remain.",
+      "facts": [
+        { "id": "vendor-untouched", "pattern": "(?i)vendor", "sample": "Never edit src/vendor/." },
+        { "id": "legacy-stays", "pattern": "(?i)legacy\\.ps1[^.]*(stay|keep|remain|retain|depend)|(stay|keep|remain|retain)[^.]*legacy\\.ps1", "sample": "src/legacy.ps1 stays because vendor depends on it." },
+        { "id": "names-kept", "pattern": "(?i)function names", "sample": "Keep function names." },
+        { "id": "remaining", "pattern": "(?is)jobs.*mail.*search|jobs.*search.*mail|mail.*jobs.*search|mail.*search.*jobs|search.*jobs.*mail|search.*mail.*jobs", "sample": "jobs, mail and search remain." }
+      ]
+    },
+    {
+      "id": "phase2",
+      "kind": "work",
+      "prompt": "Finish the migration across the remaining modules. Then write MIGRATION.md saying what moved, what did not, and why."
+    }
+  ]
+}

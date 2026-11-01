@@ -83,6 +83,10 @@ jobs:
         shell: powershell
         run: ./tests/usage-test.ps1 -Interpreter powershell
 
+      - name: Benchmark harness test
+        shell: powershell
+        run: ./tests/benchmark-test.ps1 -Interpreter powershell
+
       - name: Docs test
         shell: powershell
         run: ./tests/docs-test.ps1
@@ -125,6 +129,10 @@ jobs:
       - name: Usage test under pwsh
         shell: pwsh
         run: ./tests/usage-test.ps1 -Interpreter pwsh
+
+      - name: Benchmark harness test under pwsh
+        shell: pwsh
+        run: ./tests/benchmark-test.ps1 -Interpreter pwsh
 
       - name: Docs test under pwsh
         shell: pwsh
@@ -187,6 +195,10 @@ jobs:
       - name: Usage test
         shell: pwsh
         run: ./tests/usage-test.ps1 -Interpreter pwsh
+
+      - name: Benchmark harness test
+        shell: pwsh
+        run: ./tests/benchmark-test.ps1 -Interpreter pwsh
 
       - name: Docs test
         shell: pwsh

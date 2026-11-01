@@ -21,7 +21,7 @@ two profiles, and a measuring tool. No network calls, no API keys, no dependenci
 Whether it saves tokens on your work has not been measured yet: the comparison
 harness is in [`benchmarks/`](benchmarks/README.md), and its results are pending.
 
-> **Status:** 0.6.1. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.7.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -272,6 +272,12 @@ powershell -NoProfile -File tests\state-test.ps1
 
 # monitor, assist and guard: what each mode can block, and what an upgrade keeps
 powershell -NoProfile -File tests\modes-test.ps1
+
+# usage and cost from fixtures with known totals: mixed models, repeats, unknown prices
+powershell -NoProfile -File tests\usage-test.ps1
+
+# the benchmark harness and its graders, offline against a stand-in for Claude Code
+powershell -NoProfile -File tests\benchmark-test.ps1
 
 # what the skills and docs claim matches what the scripts do
 powershell -NoProfile -File tests\docs-test.ps1
