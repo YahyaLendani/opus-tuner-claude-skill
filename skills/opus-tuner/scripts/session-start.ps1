@@ -83,10 +83,11 @@ try {
 
     # Which handoff this start may load. /clear takes the one its own session
     # claimed on the way out, when no other /clear is pending. In the VS Code panel
-    # a new conversation often starts as 'startup' instead, so there the only
-    # candidate qualifies once the session that wrote it has ended. Anything less
-    # certain is announced, never injected: the handoff may belong to another
-    # session still running in this project.
+    # and the Desktop app a new conversation often starts as 'startup' instead, so
+    # there the only candidate qualifies once the session that wrote it has ended,
+    # again when no other /clear is pending. Anything less certain is announced,
+    # never injected: the handoff may belong to another session still running in
+    # this project.
     $body = ''
     if (($source -eq 'clear' -or $source -eq 'startup') -and -not [string]::IsNullOrWhiteSpace($cwd)) {
         $waiting = Get-WaitingHandoffs $cwd
@@ -94,14 +95,10 @@ try {
         $ambiguous = $false
         if ($monitor) {
             # Announced below like any other handoff this start may not load.
-        } elseif ($source -eq 'clear') {
-            $resolved = Resolve-ClearStart $cwd
+        } else {
+            $resolved = if ($source -eq 'clear') { Resolve-ClearStart $cwd } else { Resolve-StartupStart $cwd $waiting }
             $picked = $resolved['picked']
             $ambiguous = $resolved['ambiguous']
-        } elseif ($waiting.Count -eq 1) {
-            if (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($waiting[0]['path'], 'ended'))) {
-                $picked = $waiting[0]
-            }
         }
 
         if ($picked) {
@@ -115,7 +112,8 @@ try {
         $paths = @($waiting | ForEach-Object { $_['path'] })
         if ($paths.Count -gt 0) {
             $why = if ($monitor) { 'monitor mode does not load one automatically' }
-                   elseif ($ambiguous) { 'several sessions in this project were cleared at once, so none was loaded' }
+                   elseif ($ambiguous -and $source -eq 'clear') { 'several sessions in this project were cleared at once, so none was loaded' }
+                   elseif ($ambiguous) { 'a session in this project was cleared with no handoff and this may be its start, so none was loaded' }
                    else { 'only the session that wrote a handoff may load it automatically' }
             [void]$msgs.Add("$($paths.Count) handoff(s) wait for this project; $why. If one is yours, ask Claude to read it: $($paths -join ', ')")
         }

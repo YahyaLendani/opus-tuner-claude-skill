@@ -539,6 +539,93 @@ Invoke-PlainClear $projC9 $sidC10
 $null = Invoke-Hook 'session-start.ps1' @{ session_id = $sidC10; cwd = $projC9; hook_event_name = 'SessionStart'; source = 'resume' }
 Check 'a resumed session takes its /clear back' (-not (Test-Path -LiteralPath (Get-PlainClearFile $sidC10)))
 
+# The Desktop app was seen starting the session after /clear as 'startup', on its first
+# message. The same rules have to hold there, and for longer than a clear start's two minutes.
+Write-Section 'a /clear that arrives as startup'
+
+function Invoke-StartupStart {
+    param([string]$Project, [string]$Sid)
+    return (Invoke-Hook 'session-start.ps1' @{ session_id = $Sid; cwd = $Project; hook_event_name = 'SessionStart'; source = 'startup' })
+}
+
+# Either start may be the plain session's, so neither may load it.
+$projS1 = New-ClearProject 'startup-1'
+$sidS1 = 'abababab-0000-4000-8000-000000000001'
+New-ClaimedHandoff $projS1 $sidS1 'STARTA'
+Invoke-PlainClear $projS1 'abababab-0000-4000-8000-000000000002'
+$r = Invoke-StartupStart $projS1 'abababab-0000-4000-8000-000000000003'
+Check 'a plain /clear starting up does not load another session''s handoff' ($r.text -notmatch 'Goal of STARTA') $r.text
+Check 'that startup says why and lists the handoff' ($r.text -match 'cleared with no handoff' -and $r.text -match [regex]::Escape((Split-Path -Leaf (Get-HandoffFile $sidS1)))) $r.text
+Check 'that startup uses up the plain /clear' (-not (Test-Path -LiteralPath (Get-PlainClearFile 'abababab-0000-4000-8000-000000000002')))
+$r = Invoke-StartupStart $projS1 'abababab-0000-4000-8000-000000000004'
+Check 'the last startup cannot take what the first left' ($r.text -notmatch 'Goal of STARTA') $r.text
+Check 'the last startup is told it is waiting' ($r.text -match 'handoff\(s\) wait' -and $r.text -match [regex]::Escape((Split-Path -Leaf (Get-HandoffFile $sidS1)))) $r.text
+$r = Invoke-ClearStart $projS1 'abababab-0000-4000-8000-000000000005'
+Check 'a clear start cannot take what a startup dropped' ($r.text -notmatch 'Goal of STARTA') $r.text
+Check 'the handoff survives for its writer' (Test-Path -LiteralPath (Get-HandoffFile $sidS1))
+
+# The start comes with the first message, however long that takes.
+$projS2 = New-ClearProject 'startup-2'
+New-ClaimedHandoff $projS2 'abababab-0000-4000-8000-000000000006' 'SLOW'
+$sidS2 = 'abababab-0000-4000-8000-000000000007'
+Invoke-PlainClear $projS2 $sidS2
+(Get-Item -LiteralPath (Get-PlainClearFile $sidS2)).LastWriteTime = (Get-Date).AddHours(-3)
+$r = Invoke-StartupStart $projS2 'abababab-0000-4000-8000-000000000008'
+Check 'a /clear waiting hours for its first message still blocks a startup' ($r.text -notmatch 'Goal of SLOW') $r.text
+
+# A start of each kind may come after the other.
+$projS3 = New-ClearProject 'startup-3'
+New-ClaimedHandoff $projS3 'abababab-0000-4000-8000-000000000009' 'MIXED'
+Invoke-PlainClear $projS3 'abababab-0000-4000-8000-00000000000a'
+$null = Invoke-ClearStart $projS3 'abababab-0000-4000-8000-00000000000b'
+$r = Invoke-StartupStart $projS3 'abababab-0000-4000-8000-00000000000c'
+Check 'a startup cannot take what a clear start left' ($r.text -notmatch 'Goal of MIXED') $r.text
+
+# What must keep working.
+$projS4 = New-ClearProject 'startup-4'
+New-ClaimedHandoff $projS4 'abababab-0000-4000-8000-00000000000d' 'OWN'
+$r = Invoke-StartupStart $projS4 'abababab-0000-4000-8000-00000000000e'
+Check 'a /clear starting up alone loads its own handoff' ($r.text -match 'Goal of OWN') $r.text
+
+$projS5 = New-ClearProject 'startup-5'
+$sidS5 = 'abababab-0000-4000-8000-00000000000f'
+Invoke-PlainClear $projS5 $sidS5
+$r = Invoke-StartupStart $projS5 'abababab-0000-4000-8000-000000000010'
+Check 'a plain startup with nothing waiting says nothing about it' ($r.text -notmatch 'cleared with no handoff') $r.text
+Check 'a plain startup uses up its own /clear' (-not (Test-Path -LiteralPath (Get-PlainClearFile $sidS5)))
+New-ClaimedHandoff $projS5 'abababab-0000-4000-8000-000000000011' 'NEXT'
+$r = Invoke-StartupStart $projS5 'abababab-0000-4000-8000-000000000012'
+Check 'a /clear that has started up does not block the next one' ($r.text -match 'Goal of NEXT') $r.text
+
+$projS6 = New-ClearProject 'startup-6'
+$sidS6 = 'abababab-0000-4000-8000-000000000013'
+Invoke-PlainClear $projS6 $sidS6
+(Get-Item -LiteralPath (Get-PlainClearFile $sidS6)).LastWriteTime = (Get-Date).AddHours(-25)
+New-ClaimedHandoff $projS6 'abababab-0000-4000-8000-000000000014' 'AFTERDAY'
+$r = Invoke-StartupStart $projS6 'abababab-0000-4000-8000-000000000015'
+Check 'a /clear over a day old does not block a startup' ($r.text -match 'Goal of AFTERDAY') $r.text
+
+$projS7 = New-ClearProject 'startup-7'
+$projS7Other = New-ClearProject 'startup-7-other'
+Invoke-PlainClear $projS7Other 'abababab-0000-4000-8000-000000000016'
+New-ClaimedHandoff $projS7 'abababab-0000-4000-8000-000000000017' 'NEIGHBOUR'
+$r = Invoke-StartupStart $projS7 'abababab-0000-4000-8000-000000000018'
+Check 'a /clear in another project does not block a startup' ($r.text -match 'Goal of NEIGHBOUR') $r.text
+
+# A session still running has nothing to drop: it can end and load later.
+$projS8 = New-ClearProject 'startup-8'
+$sidS8 = 'abababab-0000-4000-8000-000000000019'
+$trS8 = New-TestTranscript -Project $projS8 -Sid $sidS8
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidS8, '-Transcript', $trS8, '-Project', $projS8)
+Set-HandoffComplete (Get-HandoffFile $sidS8) 'RUNNING'
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidS8, '-Verify')
+Invoke-PlainClear $projS8 'abababab-0000-4000-8000-00000000001a'
+$r = Invoke-StartupStart $projS8 'abababab-0000-4000-8000-00000000001b'
+Check 'a running session''s handoff is not reported as blocked' ($r.text -notmatch 'Goal of RUNNING' -and $r.text -notmatch 'cleared with no handoff' -and $r.text -match 'handoff\(s\) wait') $r.text
+$null = Invoke-Hook 'session-end.ps1' @{ session_id = $sidS8; cwd = $projS8; hook_event_name = 'SessionEnd'; reason = 'clear'; transcript_path = $trS8 }
+$r = Invoke-StartupStart $projS8 'abababab-0000-4000-8000-00000000001c'
+Check 'and that session still loads it once it clears' ($r.text -match 'Goal of RUNNING') $r.text
+
 # ---------- startup and other sources ----------
 Write-Section 'other session sources'
 

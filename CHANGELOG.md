@@ -5,6 +5,16 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The 0.7.3 fix only covered a start that arrived as `clear`. The Desktop app was seen
+  starting the session after a `/clear` as `startup`, where a session with no handoff
+  could still load another session's. A `startup` now loads nothing while a `/clear`
+  with no handoff from the last 24 hours is pending in the project, and lists the
+  handoff instead. A brand-new conversation still loads a sole ended handoff when no
+  such `/clear` is pending, because a start cannot tell the two apart. Reproduced by
+  running the hooks in a forced order; how often it happens in real use is unknown.
+
 ## [0.7.3] - 2026-11-02
 
 ### Fixed

@@ -921,6 +921,24 @@ function Resolve-ClearStart {
     return @{ picked = $null; ambiguous = $false }
 }
 
+# The same question for a start that arrived as 'startup', as a /clear can. The only
+# waiting handoff qualifies once its session has ended, unless a /clear with no handoff
+# has yet to start: this may be that start, and it can wait for its first message, so
+# the /clear counts for as long as a handoff would. With that doubt the markers go, for
+# the reason above, and the handoffs stay on disk to be listed.
+function Resolve-StartupStart {
+    param([string]$Cwd, $Waiting)
+    $ended = @($Waiting | Where-Object { Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension([string]$_['path'], 'ended')) })
+    $plain = Get-PlainClears $Cwd -MaxAgeSeconds 86400
+    if ($plain.Count -gt 0) {
+        try { [System.IO.File]::Delete([string]$plain[0]) } catch { }
+        foreach ($h in $ended) { Remove-HandoffMarkers ([string]$h['session_id']) }
+        return @{ picked = $null; ambiguous = ($ended.Count -gt 0) }
+    }
+    if ($Waiting.Count -eq 1 -and $ended.Count -eq 1) { return @{ picked = $ended[0]; ambiguous = $false } }
+    return @{ picked = $null; ambiguous = $false }
+}
+
 # Whoever creates the .taking file owns the handoff, so racing starts cannot both
 # inject it, whichever marker led them here. The rename cannot decide that: on
 # Windows, racing moves of one file can all report success. A start that dies holding
