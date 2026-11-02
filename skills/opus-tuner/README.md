@@ -63,7 +63,7 @@ the test suites stay away from a live install.
 | `post-tool.ps1` | PostToolUse / PostToolUseFailure | counts failures, tracks edited files, writes state only when a signal changed (it runs on every tool call); notes one oversized result, at most `bigOutputWarnings` per session. Matcher covers `Read`, `Grep`, `Glob`, `WebFetch`, MCP tools, the edit tools, and `Bash` **and** `PowerShell` — on Windows the shell tool is `PowerShell`, and missing it latches the repair-loop signal. |
 | `pre-tool.ps1` | PreToolUse (Read) | guard mode only, and registered only with `-Enforce`; refuses unbounded reads at the ceiling |
 | `stop.ps1` | Stop | two-stage banner; in guard mode with `hardWrap`, one handoff prompt at the ceiling |
-| `session-start.ps1` | SessionStart | resets tier; on `clear`, loads the handoff the session claimed unless another `/clear` in this project is pending; on `startup`, loads the only waiting handoff in this project if the session that wrote it has ended and it is under 24 h old; otherwise only announces it; reports (via `systemMessage`, 0 model tokens) a malformed config and the size of a large resumed session; weekly digest on `startup` |
+| `session-start.ps1` | SessionStart | resets tier; on `clear`, loads the handoff the session claimed unless another `/clear` in this project is pending; on `startup`, loads the only waiting handoff in this project if the session that wrote it has ended, it is under 24 h old and no `/clear` with no handoff is pending; otherwise only announces it; reports (via `systemMessage`, 0 model tokens) a malformed config and the size of a large resumed session; weekly digest on `startup` |
 | `session-end.ps1` | SessionEnd | marks this session's verified handoff as ended, and on `clear` as claimed; a `clear` with no verified handoff leaves a `.cleared` marker that the next start uses up |
 | `pre-compact.ps1` | PreCompact | logs every compaction; in guard mode with `blockManualCompact`, blocks the first manual `/compact` per session. Auto is never blocked |
 | `brief.ps1` | manual (`/wrap`) | drafts `state/tuner/handoffs/<session>.md` from this session's transcript; `-Verify` checks the sections and masks credentials |
@@ -186,10 +186,12 @@ Two differences that matter:
   `SessionStart`, `SessionEnd`, `PreCompact` and `/skills` lists the seven skills for
   that mode.
 - **New conversations usually start as `startup`, not `clear`.** The panel's
-  new-chat button does not always emit the `/clear` source, so `session-start.ps1`
+  new-chat button does not always emit the `/clear` source, and the Desktop app was
+  seen starting the session after a `/clear` as `startup` too, so `session-start.ps1`
   also loads a handoff on `startup` when it is the only one waiting in this project,
-  under 24 hours old, and the session that wrote it has ended. Anything less certain
-  is announced, not loaded, since it may belong to another session.
+  under 24 hours old, the session that wrote it has ended, and no `/clear` with no
+  handoff is pending. Anything less certain is announced, not loaded, since it may
+  belong to another session.
 
 A fresh conversation with no brief is the safest moment to change model or
 effort; that is what `SessionStart` does, and it is why nothing in this bundle
