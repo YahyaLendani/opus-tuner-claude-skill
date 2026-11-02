@@ -29,6 +29,19 @@ harness is in [`benchmarks/`](benchmarks/README.md), and its results are pending
 
 ---
 
+## What's new
+
+- **0.7.2:** on Windows, session starts racing for one handoff could all load it. Now
+  only one can. A start that finds the handoff already taken also keeps its own
+  messages and profile note.
+- **0.7.1:** a handoff's Commands run list names only programs.
+- **0.7.0:** three modes with interruptions off by default, handoffs that belong to one
+  session, state that overlapping hooks cannot corrupt, and usage figures priced per
+  request.
+
+Every release is in the [changelog](CHANGELOG.md). To get a new one, see
+[upgrading](#upgrading).
+
 ## Why this exists
 
 In an audit of one heavy week of Opus sessions, cache reads were **98.7% of all
@@ -59,23 +72,25 @@ tier, the effort level, and both rate-limit windows:
 Opus 5.5 | high | [#####.....] 78k/150k 52% | routine | 5h 34% | 7d 12%
 ```
 
-At 70% it adds one line, and another at the ceiling:
+From 70% it adds one line:
 
 ```text
 Opus 5.5 | high | [########..] 132k/150k 88% | routine | 5h 61% | 7d 22%
 -> to continue in a fresh session later: /wrap when this unit is done
 ```
 
-That is the real output of `statusline.ps1` for a sample session, with the colour
-codes stripped. The bar turns yellow at 70% and red at 90%.
+At the ceiling that line becomes
+`-> ceiling reached. To continue in a fresh session: /wrap, then /clear`. That is the
+real output of `statusline.ps1` for a sample session, with the colour codes stripped.
+The bar turns yellow at 70% and red at 90%.
 
 | Mechanism | Behaviour |
 |---|---|
-| **Tiered ceilings** | 150k routine, 250k deep. Deep is for refactors, hard debugging, architecture. Escalate-only: a session never drops back mid-flight. |
+| **Tiered ceilings** | 150k routine, 250k deep. Deep is for refactors, hard debugging, architecture. Escalate-only: a session stays on deep until a compaction or a new session. |
 | **Modes** | `monitor` shows numbers, `assist` (the default) also routes and advises, `guard` also fires the interruptions you turn on. By default nothing interrupts a session. |
 | **Grace band** | Between the routine ceiling and +25k the tier steps up to deep instead of showing a ceiling note on a task that is nearly finished. |
 | **Effort gears** | `low` / `medium` / `xhigh` / `max` as one-turn skills. Default is `high` and needs no skill. The router only asks for a gear on a clear signal, since it costs one extra request. |
-| **Session handoffs** | `/wrap` prepares a handoff from this session's own transcript, omits raw command arguments, masks credentials, and checks the required sections before suggesting `/clear`. Each session keeps its own file, so concurrent sessions cannot overwrite or take each other's. A fresh session starts without the history and has to rebuild whatever the handoff leaves out. |
+| **Session handoffs** | `/wrap` prepares a handoff from this session's own transcript, omits raw command arguments, masks credentials, and checks the required sections before suggesting `/clear`. Each session keeps its own file, so concurrent sessions cannot overwrite each other's. After `/clear`, the next start in that project loads it, and only one start can take it. If several sessions in a project clear at once, none is loaded and the handoffs are listed. A fresh session starts without the history and has to rebuild whatever the handoff leaves out. |
 | **Optional one-time prompts** | In guard mode, `hardWrap` asks once at the ceiling for a handoff if work remains, and `blockManualCompact` asks once before a manual `/compact`. These are prompts, not limits: see [what can interrupt a session](docs/configuration.md#what-can-interrupt-a-session). Auto-compaction is never blocked. |
 | **Decision log** | One CSV row per decision (not per prompt), so what the gears and compactions did is answerable a week later. |
 | **Measurement** | `audit.ps1` reports per-session cache read/write, output, peak context, and an API-equivalent estimate, which is not your bill or your subscription limit. `stats.ps1` reports what the tuner decided. |
@@ -90,8 +105,8 @@ codes stripped. The bar turns yellow at 70% and red at 90%.
 | `UserPromptSubmit` | `route.ps1` | Classifies the prompt, escalates the tier, picks a gear. |
 | `Stop` | `stop.ps1` | 70% note, ceiling banner or optional one-time prompt, grace escalation. |
 | `PostToolUse` / `PostToolUseFailure` | `post-tool.ps1` | Counts consecutive failures and edited files; flags one oversized tool result with a short note, at most three per session (async; writes only on change). |
-| `SessionStart` | `session-start.ps1` | Resets the tier; loads the handoff this session claimed; notes a config typo and the size of a large resumed session; once a week, shows a one-line summary of what the tuner did. |
-| `SessionEnd` | `session-end.ps1` | Marks this session's verified handoff as ready for the next session to load. |
+| `SessionStart` | `session-start.ps1` | Resets the tier, except on a resume or fork. Loads the handoff claimed by a session that just ran `/clear`, or on a fresh start the only waiting handoff if its session has ended, and lists any others. Notes a config typo and the size of a large resumed session; once a week, shows a one-line summary of what the tuner did. |
+| `SessionEnd` | `session-end.ps1` | Leaves a marker beside this session's verified handoff, so the next start in the project can load it. |
 | `PreCompact` | `pre-compact.ps1` | Logs every compaction. In guard mode with `blockManualCompact`, refuses the first manual `/compact` per session. Never blocks auto. |
 | `PreToolUse` *(optional)* | `pre-tool.ps1` | In guard mode, when registered with `-Enforce`, refuses unbounded `Read`s at the ceiling. |
 
@@ -176,9 +191,7 @@ Every key is listed in [docs/configuration.md](docs/configuration.md#profiles).
 
 **Limits.** Profiles need the hooks, so they work wherever Claude Code runs them
 (the terminal, the VS Code panel and the Desktop app) but not with `-NoHooks`
-or the portable `claude-skill`. Upgrading from 0.4.x: pull and re-run the installer with
-`-Force`, which replaces the installed skill folders (backing them up first),
-then restart Claude Code.
+or the portable `claude-skill`.
 
 ## Install
 
@@ -227,12 +240,8 @@ snap install powershell --classic
 
 It is idempotent: running it again does not duplicate entries. Use `-Force` to
 replace existing skill folders and an existing status line (both are backed up).
-`-DryRun` prints the merged settings without writing.
-
-**Upgrading from before 0.7:** the one-time Stop prompt and the first-`/compact` block
-were on by default and are now opt-in. The installer keeps settings you chose, moving
-them to guard mode, and prints what changed. See
-[upgrading](docs/configuration.md#upgrading-from-before-07).
+`-DryRun` prints the merged settings without writing. `-SkipClaudeMd` and
+`-NoStatusLine` leave those parts out.
 
 Then restart Claude Code — or **Developer: Reload Window** in VS Code, which
 reads hook config at session start.
@@ -241,6 +250,32 @@ reads hook config at session start.
 # optional: also register the PreToolUse read guard (it needs "mode": "guard")
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
 ```
+
+### Upgrading
+
+From your clone, pull and re-run the installer with `-Force`, then restart Claude Code:
+
+```powershell
+# Windows
+git pull
+powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force
+```
+
+```sh
+# macOS / Linux
+git pull
+./install.sh -Force
+```
+
+Without `-Force` the installer keeps the skill folders you already have, so the scripts
+stay on the old version. With it, the old folders are backed up first. Your settings in
+`tuner.config.json` and your own hooks are kept, but a status line of your own is replaced
+(and backed up) unless you also pass `-NoStatusLine`.
+
+**Upgrading from before 0.7:** the one-time Stop prompt and the first-`/compact` block
+were on by default and are now opt-in. The installer keeps settings you chose, moving
+them to guard mode, and prints what changed. See
+[upgrading](docs/configuration.md#upgrading-from-before-07).
 
 ### No hooks, or no Claude Code
 
@@ -264,7 +299,7 @@ powershell -NoProfile -File skills\opus-tuner\scripts\selftest.ps1
 # install/upgrade/uninstall, -NoHooks, hook shape, replay, advisory, version, future model, against a sandbox
 powershell -NoProfile -File tests\install-test.ps1
 
-# handoffs across concurrent sessions and projects, with synthetic credentials
+# handoffs across concurrent sessions, racing starts and projects, with synthetic credentials
 powershell -NoProfile -File tests\handoff-test.ps1
 
 # overlapping hooks and damaged state cannot reverse a tier or repeat an interruption
@@ -291,7 +326,7 @@ powershell -NoProfile -File tests\badge-check.ps1
 # is the install healthy? hooks registered, scripts present, config valid
 powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1
 
-# prove the registered command strings actually run (every event, ~3 s)
+# prove the registered command strings actually run (every event, a few seconds)
 powershell -NoProfile -File skills\opus-tuner\scripts\doctor.ps1 -Replay
 
 # skills only: check this copy without requiring hooks (implied when none are registered)
@@ -385,10 +420,10 @@ pwsh -NoProfile -File skills/opus-tuner/scripts/weekly.ps1
 
 Take a baseline **before** tuning (`audit.ps1 -Csv baseline.csv`), then pass it
 back with `-Baseline` after a week: the report prints peak context, cache read and
-cost per request as a before/after table. Peak context should fall first; cost per
-request falls last, because cache write and output do not scale with context the
-way cache read does. [docs/measuring.md](docs/measuring.md) explains the method
-and the traps.
+cost per request as a before/after table. A fall in those is not a saving on its own,
+because stopping earlier and starting a fresh session has costs of its own. `weekly.ps1`
+only finds a baseline named `baseline-*.csv` in `state/tuner/`; for any other file, pass
+`-Baseline`. [docs/measuring.md](docs/measuring.md) explains the method and the traps.
 
 ## Uninstall
 
@@ -414,11 +449,13 @@ uninstaller rather than deleting folders by hand.
   session unattended would throw away work you may still be reading.
 - **It never changes your model.** Model choice belongs at a session boundary,
   where it does not invalidate the prompt cache.
-- **Escalate-only.** A tier never drops mid-session, so a resumed 300k session is
-  not instantly told to wrap.
+- **Escalate-only.** A tier does not drop within a session, so a resumed 300k session
+  is not instantly told to wrap. The one exception is a compaction, which carries on
+  from a smaller context.
 - **Fail open.** A broken hook must never strand a session.
-- **No telemetry.** The only writes are local state, the handoff file, and the
-  settings file during install.
+- **No telemetry.** Hooks write only under `~/.claude/state/tuner/`. Install and
+  uninstall also change `settings.json`, `CLAUDE.md`, `tuner.config.json` and the skill
+  folders, and `/profile` edits `tuner.config.json`.
 
 ## Documentation
 
@@ -430,6 +467,9 @@ uninstaller rather than deleting folders by hand.
 | [docs/measuring.md](docs/measuring.md) | How `audit.ps1` counts, how to capture a baseline |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Hooks not firing, `pwsh` missing, VS Code quirks, quota questions |
 | [docs/decisions.md](docs/decisions.md) | Why the design is shaped this way |
+| [benchmarks/README.md](benchmarks/README.md) | The comparison harness, whose results are pending |
+| [CHANGELOG.md](CHANGELOG.md) | Every release and what it changed |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Ground rules and how to contribute |
 | [SECURITY.md](SECURITY.md) | Trust boundary, what the scripts read and write, how to report a vulnerability |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | What is expected here, and the one private channel for reporting a problem |
 | [skills/opus-tuner/README.md](skills/opus-tuner/README.md) | Technical reference for the installed skill |
