@@ -82,10 +82,11 @@ try {
     if ($source -eq 'startup') { Remove-OldTunerFiles }
 
     # Which handoff this start may load. /clear takes the one its own session
-    # claimed on the way out. In the VS Code panel a new conversation often starts
-    # as 'startup' instead, so there the only candidate qualifies once the session
-    # that wrote it has ended. Anything less certain is announced, never injected:
-    # the handoff may belong to another session still running in this project.
+    # claimed on the way out, when no other /clear is pending. In the VS Code panel
+    # a new conversation often starts as 'startup' instead, so there the only
+    # candidate qualifies once the session that wrote it has ended. Anything less
+    # certain is announced, never injected: the handoff may belong to another
+    # session still running in this project.
     $body = ''
     if (($source -eq 'clear' -or $source -eq 'startup') -and -not [string]::IsNullOrWhiteSpace($cwd)) {
         $waiting = Get-WaitingHandoffs $cwd
@@ -94,12 +95,9 @@ try {
         if ($monitor) {
             # Announced below like any other handoff this start may not load.
         } elseif ($source -eq 'clear') {
-            $claims = Get-HandoffClaims $cwd
-            if ($claims.Count -eq 1) {
-                $picked = $claims[0]
-            } elseif ($claims.Count -gt 1) {
-                $ambiguous = $true
-            }
+            $resolved = Resolve-ClearStart $cwd
+            $picked = $resolved['picked']
+            $ambiguous = $resolved['ambiguous']
         } elseif ($waiting.Count -eq 1) {
             if (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($waiting[0]['path'], 'ended'))) {
                 $picked = $waiting[0]

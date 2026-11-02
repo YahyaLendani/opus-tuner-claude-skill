@@ -417,6 +417,128 @@ Check 'a vanished handoff is not injected' ($r.text -notmatch 'Goal of VANISH') 
 Check 'a vanished handoff is not waiting' ($r.text -notmatch 'handoff\(s\) wait') $r.text
 Get-ChildItem -LiteralPath (Join-Path $script:StateDir 'handoffs') -Filter "$sidV.*" -ErrorAction SilentlyContinue | Remove-Item -Force
 
+# ---------- a /clear with no handoff ----------
+Write-Section 'a session with no handoff clears around the same time'
+
+# A start cannot tell which session it replaces. One claim alone used to be loaded by
+# whichever start came first, even one from a session that never wrote a handoff.
+function New-ClaimedHandoff {
+    param([string]$Project, [string]$Sid, [string]$Tag)
+    $tr = New-TestTranscript -Project $Project -Sid $Sid
+    $null = Invoke-Script 'brief.ps1' @('-SessionId', $Sid, '-Transcript', $tr, '-Project', $Project)
+    Set-HandoffComplete (Get-HandoffFile $Sid) $Tag
+    $null = Invoke-Script 'brief.ps1' @('-SessionId', $Sid, '-Verify')
+    $null = Invoke-Hook 'session-end.ps1' @{ session_id = $Sid; cwd = $Project; hook_event_name = 'SessionEnd'; reason = 'clear'; transcript_path = $tr }
+}
+function Invoke-PlainClear {
+    param([string]$Project, [string]$Sid)
+    $null = Invoke-Hook 'session-end.ps1' @{ session_id = $Sid; cwd = $Project; hook_event_name = 'SessionEnd'; reason = 'clear' }
+}
+function Invoke-ClearStart {
+    param([string]$Project, [string]$Sid)
+    return (Invoke-Hook 'session-start.ps1' @{ session_id = $Sid; cwd = $Project; hook_event_name = 'SessionStart'; source = 'clear' })
+}
+function New-ClearProject {
+    param([string]$Name)
+    $p = Join-Path $script:Sandbox $Name
+    New-Item -ItemType Directory -Force -Path $p | Out-Null
+    return $p
+}
+function Get-PlainClearFile { param([string]$Sid) return [System.IO.Path]::ChangeExtension((Get-HandoffFile $Sid), 'cleared') }
+
+# The plain session starts first.
+$projC1 = New-ClearProject 'clear-1'
+$sidC3 = 'cdcdcdcd-0000-4000-8000-000000000001'
+New-ClaimedHandoff $projC1 $sidC3 'FIRST'
+Invoke-PlainClear $projC1 'cdcdcdcd-0000-4000-8000-000000000002'
+$r = Invoke-ClearStart $projC1 'cdcdcdcd-0000-4000-8000-000000000003'
+Check 'a plain /clear does not load another session''s handoff' ($r.text -notmatch 'Goal of FIRST') $r.text
+Check 'that start is told the handoff is waiting' ($r.text -match 'cleared at once' -and $r.text -match [regex]::Escape((Split-Path -Leaf (Get-HandoffFile $sidC3)))) $r.text
+$r = Invoke-ClearStart $projC1 'cdcdcdcd-0000-4000-8000-000000000004'
+Check 'the writer''s start does not load it either' ($r.text -notmatch 'Goal of FIRST') $r.text
+Check 'the writer''s start is told it is waiting' ($r.text -match 'handoff\(s\) wait' -and $r.text -match [regex]::Escape((Split-Path -Leaf (Get-HandoffFile $sidC3)))) $r.text
+Check 'the overlapped handoff survives' (Test-Path -LiteralPath (Get-HandoffFile $sidC3))
+
+# The other order: the first start must not leave the handoff for the plain session.
+$projC2 = New-ClearProject 'clear-2'
+$sidC4 = 'cdcdcdcd-0000-4000-8000-000000000005'
+New-ClaimedHandoff $projC2 $sidC4 'SECOND'
+Invoke-PlainClear $projC2 'cdcdcdcd-0000-4000-8000-000000000006'
+$r = Invoke-ClearStart $projC2 'cdcdcdcd-0000-4000-8000-000000000007'
+Check 'the first of two starts loads nothing' ($r.text -notmatch 'Goal of SECOND') $r.text
+$r = Invoke-ClearStart $projC2 'cdcdcdcd-0000-4000-8000-000000000008'
+Check 'the last start cannot take what the first left' ($r.text -notmatch 'Goal of SECOND') $r.text
+Check 'the handoff is still there for its writer' (Test-Path -LiteralPath (Get-HandoffFile $sidC4))
+
+# A later session's claim, while a plain session's start is still on its way.
+$projC3 = New-ClearProject 'clear-3'
+New-ClaimedHandoff $projC3 'cdcdcdcd-0000-4000-8000-000000000009' 'EARLY'
+Invoke-PlainClear $projC3 'cdcdcdcd-0000-4000-8000-00000000000a'
+$null = Invoke-ClearStart $projC3 'cdcdcdcd-0000-4000-8000-00000000000b'
+New-ClaimedHandoff $projC3 'cdcdcdcd-0000-4000-8000-00000000000c' 'LATE'
+$r = Invoke-ClearStart $projC3 'cdcdcdcd-0000-4000-8000-00000000000d'
+Check 'a start still on its way cannot take a later claim' ($r.text -notmatch 'Goal of LATE') $r.text
+
+# The writer's start never came.
+$projC4 = New-ClearProject 'clear-4'
+$sidC5 = 'cdcdcdcd-0000-4000-8000-00000000000e'
+New-ClaimedHandoff $projC4 $sidC5 'ORPHAN'
+(Get-Item -LiteralPath ([System.IO.Path]::ChangeExtension((Get-HandoffFile $sidC5), 'claim'))).LastWriteTime = (Get-Date).AddSeconds(-100)
+Invoke-PlainClear $projC4 'cdcdcdcd-0000-4000-8000-00000000000f'
+$r = Invoke-ClearStart $projC4 'cdcdcdcd-0000-4000-8000-000000000010'
+Check 'a later plain /clear does not load an unclaimed handoff' ($r.text -notmatch 'Goal of ORPHAN' -and (Test-Path -LiteralPath (Get-HandoffFile $sidC5))) $r.text
+
+# A handoff that was never verified does not make a session any less of a /clear.
+$projC5 = New-ClearProject 'clear-5'
+New-ClaimedHandoff $projC5 'cdcdcdcd-0000-4000-8000-000000000011' 'VERIFIED'
+$sidC6 = 'cdcdcdcd-0000-4000-8000-000000000012'
+$trC6 = New-TestTranscript -Project $projC5 -Sid $sidC6
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidC6, '-Transcript', $trC6, '-Project', $projC5)
+$null = Invoke-Hook 'session-end.ps1' @{ session_id = $sidC6; cwd = $projC5; hook_event_name = 'SessionEnd'; reason = 'clear'; transcript_path = $trC6 }
+$r = Invoke-ClearStart $projC5 'cdcdcdcd-0000-4000-8000-000000000013'
+Check 'an unverified handoff still counts as a /clear' ($r.text -notmatch 'Goal of VERIFIED') $r.text
+
+# What must keep working: each of these is the writer's start, alone in its turn.
+$projC6 = New-ClearProject 'clear-6'
+Invoke-PlainClear $projC6 'cdcdcdcd-0000-4000-8000-000000000014'
+$null = Invoke-ClearStart $projC6 'cdcdcdcd-0000-4000-8000-000000000015'
+Check 'a plain start uses up its own /clear' (-not (Test-Path -LiteralPath (Get-PlainClearFile 'cdcdcdcd-0000-4000-8000-000000000014')))
+New-ClaimedHandoff $projC6 'cdcdcdcd-0000-4000-8000-000000000016' 'AFTERPLAIN'
+$r = Invoke-ClearStart $projC6 'cdcdcdcd-0000-4000-8000-000000000017'
+Check 'a /clear that has already started does not block the next one' ($r.text -match 'Goal of AFTERPLAIN') $r.text
+
+$projC7 = New-ClearProject 'clear-7'
+$sidC7 = 'cdcdcdcd-0000-4000-8000-000000000018'
+Invoke-PlainClear $projC7 $sidC7
+(Get-Item -LiteralPath (Get-PlainClearFile $sidC7)).LastWriteTime = (Get-Date).AddSeconds(-130)
+New-ClaimedHandoff $projC7 'cdcdcdcd-0000-4000-8000-000000000019' 'AFTEROLD'
+$r = Invoke-ClearStart $projC7 'cdcdcdcd-0000-4000-8000-00000000001a'
+Check 'an old /clear whose start never came does not block a new one' ($r.text -match 'Goal of AFTEROLD') $r.text
+
+$projC8 = New-ClearProject 'clear-8'
+$projC8Other = New-ClearProject 'clear-8-other'
+Invoke-PlainClear $projC8Other 'cdcdcdcd-0000-4000-8000-00000000001b'
+New-ClaimedHandoff $projC8 'cdcdcdcd-0000-4000-8000-00000000001c' 'ELSEWHERE'
+$r = Invoke-ClearStart $projC8 'cdcdcdcd-0000-4000-8000-00000000001d'
+Check 'a /clear in another project does not block this one' ($r.text -match 'Goal of ELSEWHERE') $r.text
+
+# Upkeep.
+$projC9 = New-ClearProject 'clear-9'
+$sidC8 = 'cdcdcdcd-0000-4000-8000-00000000001e'
+Invoke-PlainClear $projC9 $sidC8
+(Get-Item -LiteralPath (Get-PlainClearFile $sidC8)).LastWriteTime = (Get-Date).AddDays(-8)
+$null = Invoke-Hook 'session-start.ps1' @{ session_id = 'cdcdcdcd-0000-4000-8000-00000000001f'; cwd = $projC9; hook_event_name = 'SessionStart'; source = 'startup' }
+Check 'housekeeping clears an old /clear marker' (-not (Test-Path -LiteralPath (Get-PlainClearFile $sidC8)))
+$sidC9 = 'cdcdcdcd-0000-4000-8000-000000000020'
+Set-TestConfig '{"mode":"monitor"}'
+Invoke-PlainClear $projC9 $sidC9
+Set-TestConfig '{}'
+Check 'monitor mode leaves no /clear marker' (-not (Test-Path -LiteralPath (Get-PlainClearFile $sidC9)))
+$sidC10 = 'cdcdcdcd-0000-4000-8000-000000000021'
+Invoke-PlainClear $projC9 $sidC10
+$null = Invoke-Hook 'session-start.ps1' @{ session_id = $sidC10; cwd = $projC9; hook_event_name = 'SessionStart'; source = 'resume' }
+Check 'a resumed session takes its /clear back' (-not (Test-Path -LiteralPath (Get-PlainClearFile $sidC10)))
+
 # ---------- startup and other sources ----------
 Write-Section 'other session sources'
 

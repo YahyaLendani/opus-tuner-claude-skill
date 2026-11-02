@@ -5,6 +5,14 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A session with no handoff that ran `/clear` could load the handoff another session in
+  the project had just claimed, leaving that session's new start with nothing and no
+  message. Every `/clear` now leaves a marker. A start loads a claim only when no other
+  `/clear` is pending; otherwise nothing is loaded and the handoff is listed. Reproduced
+  by running the hooks in a forced order; how often it happens in real use is unknown.
+
 ## [0.7.2] - 2026-11-02
 
 ### Fixed
