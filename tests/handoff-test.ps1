@@ -311,6 +311,77 @@ $raceResults = @($racers | ForEach-Object { Wait-ScriptProcess $_ })
 $winners = @($raceResults | Where-Object { $_.text -match 'Goal of RACE' }).Count
 Check 'racing starts inject a claim exactly once' ($winners -eq 1) "winners=$winners"
 
+# Two starts overlapping inside the take. On Windows, racing moves of one file can
+# all report success, which timing alone cannot repeat. So copies of the scripts
+# stand in for the move: it reports success like the real one, and the source stays
+# in place until a second start arrives or this test lets the first one go.
+$sidL = 'abababab-0000-4000-8000-00000000000f'
+$trL = New-TestTranscript -Project $projB -Sid $sidL
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidL, '-Transcript', $trL, '-Project', $projB)
+Set-HandoffComplete (Get-HandoffFile $sidL) 'OVERLAP'
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidL, '-Verify')
+$null = Invoke-Hook 'session-end.ps1' @{ session_id = $sidL; cwd = $projB; hook_event_name = 'SessionEnd'; reason = 'clear'; transcript_path = $trL }
+$overlapDir = Join-Path $script:Sandbox 'overlap'
+New-Item -ItemType Directory -Force -Path $overlapDir | Out-Null
+$realScriptDir = $script:ScriptDir
+$script:ScriptDir = Join-Path $script:Sandbox 'scripts-with-overlap'
+New-Item -ItemType Directory -Force -Path $script:ScriptDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $realScriptDir '_common.ps1'), (Join-Path $realScriptDir 'session-start.ps1') -Destination $script:ScriptDir
+$overlapCommon = Join-Path $script:ScriptDir '_common.ps1'
+$overlapSource = [System.IO.File]::ReadAllText($overlapCommon)
+$realMove = '[System.IO.File]::Move($path, $taken)'
+Check 'the overlap test can stand in for the move' ($overlapSource.Contains($realMove))
+$standIn = @'
+
+function Move-Overlapping {
+    param([string]$From, [string]$To)
+    $dir = '@DIR@'
+    [System.IO.File]::Copy($From, $To)
+    [System.IO.File]::WriteAllText((Join-Path $dir "arrived-$PID"), 'x')
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        if ([System.IO.File]::Exists((Join-Path $dir 'release'))) { break }
+        if (@(Get-ChildItem -LiteralPath $dir -Filter 'arrived-*').Count -ge 2) { break }
+        Start-Sleep -Milliseconds 20
+    }
+    if ([System.IO.File]::Exists($From)) { try { [System.IO.File]::Delete($From) } catch { } }
+}
+'@.Replace('@DIR@', $overlapDir.Replace("'", "''"))
+[System.IO.File]::WriteAllText($overlapCommon, $overlapSource.Replace($realMove, 'Move-Overlapping $path $taken') + $standIn, $script:Utf8)
+$first = Start-ScriptProcess 'session-start.ps1' @() $payload
+$deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $deadline -and @(Get-ChildItem -LiteralPath $overlapDir -Filter 'arrived-*').Count -eq 0) { Start-Sleep -Milliseconds 20 }
+Check 'the first start is inside the take' (@(Get-ChildItem -LiteralPath $overlapDir -Filter 'arrived-*').Count -eq 1)
+$second = Wait-ScriptProcess (Start-ScriptProcess 'session-start.ps1' @() $payload)
+[System.IO.File]::WriteAllText((Join-Path $overlapDir 'release'), 'x')
+$firstResult = Wait-ScriptProcess $first
+$script:ScriptDir = $realScriptDir
+Check 'the start holding the take injects the handoff' ($firstResult.text -match 'Goal of OVERLAP') $firstResult.text
+Check 'a start overlapping the take does not inject it' ($second.text -notmatch 'Goal of OVERLAP') $second.text
+$overlapLeft = @(Get-ChildItem -LiteralPath (Join-Path $script:StateDir 'handoffs') -File -Filter "$sidL.*")
+Check 'an overlapped take leaves nothing behind' ($overlapLeft.Count -eq 0) (@($overlapLeft | ForEach-Object { $_.Name }) -join ', ')
+
+# A start that died while taking a handoff leaves its marker. The handoff stays, and
+# nothing loads it until housekeeping decides the marker is old.
+$sidD = 'abababab-0000-4000-8000-000000000010'
+$trD = New-TestTranscript -Project $projB -Sid $sidD
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidD, '-Transcript', $trD, '-Project', $projB)
+Set-HandoffComplete (Get-HandoffFile $sidD) 'DEAD'
+$null = Invoke-Script 'brief.ps1' @('-SessionId', $sidD, '-Verify')
+$null = Invoke-Hook 'session-end.ps1' @{ session_id = $sidD; cwd = $projB; hook_event_name = 'SessionEnd'; reason = 'clear'; transcript_path = $trD }
+$deadMarker = "$(Get-HandoffFile $sidD).taking"
+[System.IO.File]::WriteAllText($deadMarker, '')
+$r = Invoke-Hook 'session-start.ps1' @{ session_id = 'after-dead-1'; cwd = $projB; hook_event_name = 'SessionStart'; source = 'clear' }
+Check 'a held take is not injected by /clear' ($r.text -notmatch 'Goal of DEAD') $r.text
+Check 'a held take leaves the handoff in place' (Test-Path -LiteralPath (Get-HandoffFile $sidD))
+$r = Invoke-Hook 'session-start.ps1' @{ session_id = 'after-dead-2'; cwd = $projB; hook_event_name = 'SessionStart'; source = 'startup' }
+Check 'a held take is not injected at startup' ($r.text -notmatch 'Goal of DEAD') $r.text
+Check 'housekeeping keeps a recent take marker' (Test-Path -LiteralPath $deadMarker)
+(Get-Item -LiteralPath $deadMarker).LastWriteTime = (Get-Date).AddDays(-2)
+$r = Invoke-Hook 'session-start.ps1' @{ session_id = 'after-dead-3'; cwd = $projB; hook_event_name = 'SessionStart'; source = 'startup' }
+Check 'housekeeping clears an old take marker' (-not (Test-Path -LiteralPath $deadMarker))
+Check 'the handoff loads once its old marker is gone' ($r.text -match 'Goal of DEAD') $r.text
+
 # The losing start: a rival renames the handoff after this start listed it. Copies
 # of the scripts put the rename exactly between the listing and the age check. A
 # throw there would lose everything this start has to report.

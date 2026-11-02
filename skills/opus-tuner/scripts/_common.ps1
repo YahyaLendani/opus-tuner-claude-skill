@@ -884,35 +884,46 @@ function Get-HandoffClaims {
     return , $out
 }
 
-# Whoever renames the handoff itself owns it, so racing starts cannot both inject
-# it, whichever marker led them here. The copy kept for a while in case the pickup
-# went wrong is scrubbed: the file may have been edited by hand since verification.
+# Whoever creates the .taking file owns the handoff, so racing starts cannot both
+# inject it, whichever marker led them here. The rename cannot decide that: on
+# Windows, racing moves of one file can all report success. A start that dies holding
+# the file leaves the handoff in place, unloaded until housekeeping removes the file.
+# The copy kept for a while in case the pickup went wrong is scrubbed: the file may
+# have been edited by hand since verification.
 function Receive-Handoff {
     param($Handoff)
     $path = [string]$Handoff['path']
-    $taken = "$path.$PID.taken"
-    $moved = $false
-    for ($attempt = 0; $attempt -lt 10 -and -not $moved; $attempt++) {
-        if (-not [System.IO.File]::Exists($path)) { return $null }
-        try {
-            [System.IO.File]::Move($path, $taken)
-            $moved = $true
-        } catch { Start-Sleep -Milliseconds 20 }
-    }
-    if (-not $moved) { return $null }
-
-    $fresh = Read-Handoff $taken
-    if (-not $fresh) {
-        try { [System.IO.File]::Move($taken, $path) } catch { }
-        return $null
-    }
-    Remove-HandoffMarkers ([string]$Handoff['session_id'])
-    $kept = Join-Path (Join-Path (Get-HandoffDir) 'consumed') (Split-Path -Leaf $path)
+    $taking = "$path.taking"
     try {
-        [void](Write-AtomicText $kept (Protect-Sensitive (Read-SharedText $taken)))
-        Remove-Item -LiteralPath $taken -Force
-    } catch { }
-    return $fresh
+        (New-Object System.IO.FileStream($taking, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)).Dispose()
+    } catch { return $null }
+    try {
+        $taken = "$path.$PID.taken"
+        $moved = $false
+        for ($attempt = 0; $attempt -lt 10 -and -not $moved; $attempt++) {
+            if (-not [System.IO.File]::Exists($path)) { return $null }
+            try {
+                [System.IO.File]::Move($path, $taken)
+                $moved = $true
+            } catch { Start-Sleep -Milliseconds 20 }
+        }
+        if (-not $moved) { return $null }
+
+        $fresh = Read-Handoff $taken
+        if (-not $fresh) {
+            try { [System.IO.File]::Move($taken, $path) } catch { }
+            return $null
+        }
+        Remove-HandoffMarkers ([string]$Handoff['session_id'])
+        $kept = Join-Path (Join-Path (Get-HandoffDir) 'consumed') (Split-Path -Leaf $path)
+        try {
+            [void](Write-AtomicText $kept (Protect-Sensitive (Read-SharedText $taken)))
+            Remove-Item -LiteralPath $taken -Force
+        } catch { }
+        return $fresh
+    } finally {
+        try { [System.IO.File]::Delete($taking) } catch { }
+    }
 }
 
 # What goes into the new session: the body, scrubbed again, because the file may
@@ -949,9 +960,9 @@ function Remove-OldTunerFiles {
     foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Recurse -ErrorAction SilentlyContinue)) {
         $days = ($now - $f.LastWriteTime).TotalDays
         $old = switch -Regex ($f.Name) {
-            '\.(tmp|taken)$'    { $days -gt 1; break }
-            '\.(claim|ended)$'  { $days -gt 7; break }
-            default             { $days -gt 30 }
+            '\.(tmp|taken|taking)$' { $days -gt 1; break }
+            '\.(claim|ended)$'      { $days -gt 7; break }
+            default                 { $days -gt 30 }
         }
         if ($old) { try { Remove-Item -LiteralPath $f.FullName -Force } catch { } }
     }
