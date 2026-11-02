@@ -10,6 +10,10 @@ All notable changes are recorded here. This project follows
 - A session start racing another for one handoff could print nothing, losing its system
   messages and profile note, when the handoff was taken while it was being listed. A
   handoff that vanishes now counts as not waiting.
+- On Windows, session starts racing for one handoff could all load it, because racing
+  moves of one file can all report success. Taking a handoff now first creates a file
+  that only one start can create. Reproduced under heavy load on Windows PowerShell 5.1;
+  how often it happens in real use is unknown.
 
 ## [0.7.1] - 2026-11-01
 
