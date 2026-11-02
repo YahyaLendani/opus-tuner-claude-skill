@@ -5,6 +5,8 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-02
+
 ### Fixed
 
 - A session with no handoff that ran `/clear` could load the handoff another session in
@@ -425,6 +427,7 @@ First public release.
   measured slower on the development machine; see the latency section.
 - Hooks fail open: any error exits 0 and lets Claude Code continue.
 
+[0.7.3]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.6.1...v0.7.0

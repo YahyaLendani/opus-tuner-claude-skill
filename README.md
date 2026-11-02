@@ -21,7 +21,7 @@ two profiles, and a measuring tool. No network calls, no API keys, no dependenci
 Whether it saves tokens on your work has not been measured yet: the comparison
 harness is in [`benchmarks/`](benchmarks/README.md), and its results are pending.
 
-> **Status:** 0.7.2. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.7.3. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -31,6 +31,9 @@ harness is in [`benchmarks/`](benchmarks/README.md), and its results are pending
 
 ## What's new
 
+- **0.7.3:** a session with no handoff that ran `/clear` could load the handoff another
+  session in the project had just claimed. Now nothing loads when two `/clear`s overlap,
+  and the handoff is listed.
 - **0.7.2:** on Windows, session starts racing for one handoff could all load it. Now
   only one can. A start that finds the handoff already taken also keeps its own
   messages and profile note.
