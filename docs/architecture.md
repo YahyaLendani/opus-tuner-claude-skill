@@ -19,7 +19,8 @@ response ends
     │  stop.ps1           70% note · ceiling banner or optional prompt · grace escalation
     ▼
    /wrap  →  handoff drafted, filled in, verified
-   /clear →  session-end.ps1 claims it · the next session-start.ps1 loads it
+   /clear →  session-end.ps1 claims it · the next session-start.ps1 loads it,
+             unless another /clear in the project is pending; then it only lists it
 
    /compact (any time) → pre-compact.ps1   log it · optionally refuse the first manual one
 ```

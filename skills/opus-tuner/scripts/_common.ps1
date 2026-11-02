@@ -847,7 +847,8 @@ function Get-WaitingHandoffs {
 }
 
 # Markers are what SessionEnd leaves behind: <sid>.claim when the session ran
-# /clear, <sid>.ended whenever it ended at all.
+# /clear, <sid>.ended whenever it ended at all, and <sid>.cleared when it ran /clear
+# with no verified handoff.
 function Set-HandoffMarker {
     param([string]$SessionId, [string]$Kind, [string]$Cwd)
     $path = [System.IO.Path]::ChangeExtension((Get-HandoffPath $SessionId), $Kind)
@@ -858,7 +859,7 @@ function Set-HandoffMarker {
 function Remove-HandoffMarkers {
     param([string]$SessionId)
     $base = Get-HandoffPath $SessionId
-    foreach ($kind in @('claim', 'ended')) {
+    foreach ($kind in @('claim', 'ended', 'cleared')) {
         $p = [System.IO.Path]::ChangeExtension($base, $kind)
         if (Test-Path -LiteralPath $p) { try { Remove-Item -LiteralPath $p -Force } catch { } }
     }
@@ -882,6 +883,42 @@ function Get-HandoffClaims {
         } catch { }
     }
     return , $out
+}
+
+# Fresh /clears in this directory that had no verified handoff, oldest first. Fresh
+# by the same rule as a claim.
+function Get-PlainClears {
+    param([string]$Cwd, [int]$MaxAgeSeconds = 120)
+    $out = New-Object System.Collections.ArrayList
+    $dir = Get-HandoffDir
+    if (-not (Test-Path -LiteralPath $dir)) { return , $out }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.cleared' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)) {
+        try {
+            if (((Get-Date) - $f.LastWriteTime).TotalSeconds -gt $MaxAgeSeconds) { continue }
+            $mark = ConvertTo-Hashtable (Read-SharedText $f.FullName | ConvertFrom-Json)
+            if (Test-SameProject ([string]$mark['cwd']) $Cwd) { [void]$out.Add($f.FullName) }
+        } catch { }
+    }
+    return , $out
+}
+
+# Which handoff a /clear start may load. It cannot tell which session it replaces, so
+# a claim is only safe when no other /clear is pending. Each start uses one up: with
+# any doubt, the claims are dropped so that no later start can load what this one
+# left, and the handoffs stay on disk to be listed. Otherwise a plain /clear is spent.
+function Resolve-ClearStart {
+    param([string]$Cwd)
+    $claims = Get-HandoffClaims $Cwd
+    $plain = Get-PlainClears $Cwd
+    if ($claims.Count -eq 1 -and $plain.Count -eq 0) { return @{ picked = $claims[0]; ambiguous = $false } }
+    if ($claims.Count -gt 0) {
+        foreach ($h in $claims) {
+            try { [System.IO.File]::Delete([System.IO.Path]::ChangeExtension([string]$h['path'], 'claim')) } catch { }
+        }
+        return @{ picked = $null; ambiguous = $true }
+    }
+    if ($plain.Count -gt 0) { try { [System.IO.File]::Delete([string]$plain[0]) } catch { } }
+    return @{ picked = $null; ambiguous = $false }
 }
 
 # Whoever creates the .taking file owns the handoff, so racing starts cannot both
@@ -960,9 +997,9 @@ function Remove-OldTunerFiles {
     foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Recurse -ErrorAction SilentlyContinue)) {
         $days = ($now - $f.LastWriteTime).TotalDays
         $old = switch -Regex ($f.Name) {
-            '\.(tmp|taken|taking)$' { $days -gt 1; break }
-            '\.(claim|ended)$'      { $days -gt 7; break }
-            default                 { $days -gt 30 }
+            '\.(tmp|taken|taking)$'    { $days -gt 1; break }
+            '\.(claim|ended|cleared)$' { $days -gt 7; break }
+            default                    { $days -gt 30 }
         }
         if ($old) { try { Remove-Item -LiteralPath $f.FullName -Force } catch { } }
     }
