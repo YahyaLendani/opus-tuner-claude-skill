@@ -18,7 +18,7 @@ reference for what is wired where and why. The scripts run on Windows PowerShell
 | Effort gears | `skills/gear-{low,medium,xhigh,max}` | ~100 tok/turn total (descriptions stay visible so a gear can be picked when the router is silent) |
 | Handoff writer | `skills/wrap` + `scripts/brief.ps1` | 0 until invoked |
 | Profile switch | `skills/profile` + `scripts/profile.ps1` | installed only with hooks; 0 (user-only skill); creative adds ~100 tok once per session |
-| Portable rules | `skills/claude-skill` | installed only with `-NoHooks`; for clients without hooks |
+| Portable rules | `portable/claude-skill` | installed only with `-NoHooks`; for clients without hooks |
 | Hooks | `~/.claude/settings.json` | 0 tokens |
 | Status line | `settings.json` → `statusline.ps1` | 0 tokens |
 

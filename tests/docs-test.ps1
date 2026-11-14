@@ -86,7 +86,7 @@ $skill = Read-Doc 'skills/opus-tuner/SKILL.md'
 Check 'the skill says how to continue in a fresh session' ($skill -match 'When the user wants to continue in a fresh session, prepare and verify a handoff\. Ask them to run `/clear` afterward\.')
 Check 'the skill keeps runtime hooks separate' ($skill -match 'Runtime hooks separately control any configured compaction interruption\.')
 Check 'the skill does not narrate hook decisions' ($skill -notmatch '(?i)stop hook \*?\*?blocks|refuses to end')
-$portable = Read-Doc 'skills/claude-skill/SKILL.md'
+$portable = Read-Doc 'portable/claude-skill/SKILL.md'
 Check 'the portable skill does not compare a handoff with compaction' ($portable -notmatch '(?i)than compaction')
 
 Write-Section 'interruptions are documented exactly'

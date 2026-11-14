@@ -43,13 +43,11 @@ Ask with `ctx.ps1`:
 
 ```
 # Windows
-powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\ctx.ps1"
+powershell -NoProfile -File "${CLAUDE_SKILL_DIR}/scripts/ctx.ps1"
 
 # macOS / Linux
-pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/ctx.ps1"
+pwsh -NoProfile -File "${CLAUDE_SKILL_DIR}/scripts/ctx.ps1"
 ```
-
-If `CLAUDE_CONFIG_DIR` is set, substitute it for `~/.claude` in that path.
 
 ## Gears
 

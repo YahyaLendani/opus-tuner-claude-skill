@@ -17,7 +17,7 @@ three at install time and writes the result into `settings.json`.
 | Claude Code with hooks blocked by policy | **no** | advisory only | `-NoHooks` |
 
 Hooks are a Claude Code feature. They do not exist in claude.ai or in the plain
-Desktop chat, which is why the portable [`claude-skill`](../skills/claude-skill/SKILL.md)
+Desktop chat, which is why the portable [`claude-skill`](../portable/claude-skill/SKILL.md)
 exists: it is the same discipline as a document, with no measurement and no
 enforcement.
 
@@ -146,7 +146,7 @@ uninstaller.
 ## Plain Claude (Desktop / claude.ai)
 
 Hooks are not available, so the bundle ships a second, self-contained skill:
-[`skills/claude-skill/SKILL.md`](../skills/claude-skill/SKILL.md). It carries the
+[`portable/claude-skill/SKILL.md`](../portable/claude-skill/SKILL.md). It carries the
 tier ceilings, the token rules, the handoff template and the resume procedure as
 prose. Install it the way your client supports skills:
 

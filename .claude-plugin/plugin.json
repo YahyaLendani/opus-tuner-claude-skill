@@ -1,0 +1,13 @@
+{
+  "name": "opus-tuner",
+  "displayName": "opus-tuner",
+  "version": "0.7.4",
+  "description": "Context tracking and safe session handoffs for long Claude Code sessions: a context ceiling, tier and gear routing, and a verified handoff before /clear.",
+  "author": {
+    "name": "Yahya Lendani",
+    "url": "https://github.com/YahyaLendani"
+  },
+  "homepage": "https://github.com/YahyaLendani/opus-tuner-claude-skill",
+  "repository": "https://github.com/YahyaLendani/opus-tuner-claude-skill",
+  "keywords": ["context", "tokens", "handoff", "hooks", "session"]
+}
