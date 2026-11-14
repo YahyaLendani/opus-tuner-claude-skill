@@ -5,6 +5,8 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-14
+
 ### Added
 
 - Install as a Claude Code plugin: add this repository as a marketplace and install
@@ -465,6 +467,7 @@ First public release.
   measured slower on the development machine; see the latency section.
 - Hooks fail open: any error exits 0 and lets Claude Code continue.
 
+[0.8.0]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.7.4...v0.8.0
 [0.7.4]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/YahyaLendani/opus-tuner-claude-skill/compare/v0.7.1...v0.7.2

@@ -21,7 +21,7 @@ two profiles, and a measuring tool. No network calls, no API keys, no dependenci
 Whether it saves tokens on your work has not been measured yet: the comparison
 harness is in [`benchmarks/`](benchmarks/README.md), and its results are pending.
 
-> **Status:** 0.7.4. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
+> **Status:** 0.8.0. Windows PowerShell 5.1 and `pwsh` 7 are both supported; CI
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
@@ -31,6 +31,9 @@ harness is in [`benchmarks/`](benchmarks/README.md), and its results are pending
 
 ## What's new
 
+- **0.8.0:** install it as a Claude Code plugin with two `/plugin` commands and nothing
+  to run by hand. See [install](#as-a-plugin-recommended). The installer still works,
+  and is the way to get the status line and the read guard.
 - **0.7.4:** the 0.7.3 fix now also holds when a `/clear` starts its new session as
   `startup`, as the Desktop app was seen doing. Nothing loads while a `/clear` with no
   handoff is pending, and the handoff is listed.
