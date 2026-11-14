@@ -33,9 +33,10 @@ Behaviour in issues and pull requests is covered by
 ```
 skills/opus-tuner/scripts/   hooks and the CLI scripts
 skills/opus-tuner/           SKILL.md + reference docs
-skills/claude-skill/         portable, hook-free skill for Desktop / claude.ai
+portable/claude-skill/       portable, hook-free skill for Desktop / claude.ai
 skills/gear-*/               one-turn effort skills
 skills/wrap/                 the handoff skill
+.claude-plugin/ hooks/       the plugin manifest, marketplace and hooks
 tests/                       installer integration test
 install.ps1 / uninstall.ps1
 install.sh                   POSIX wrapper around install.ps1
@@ -113,8 +114,9 @@ request. Run both before touching the README.
 
 ## Releasing
 
-1. Bump `skills/opus-tuner/VERSION`, add the `CHANGELOG.md` entry, and update the
-   `> **Status:**` line in `README.md` to the same number. Add a
+1. Bump `skills/opus-tuner/VERSION` and the `version` in `.claude-plugin/plugin.json`
+   (plugin users only get an update when it changes), add the `CHANGELOG.md`
+   entry, and update the `> **Status:**` line in `README.md` to the same number. Add a
    `[X.Y.Z]: …/compare/vPREV...vX.Y.Z` definition at the bottom of the changelog
    so the heading links to the diff.
 2. Push and wait for CI. The `Version is consistent` step fails if the three

@@ -37,7 +37,9 @@ jobs:
           if ($changelog -notmatch "(?m)^## \[$([regex]::Escape($v))\]") {
             throw "CHANGELOG has no '$v' entry"
           }
-          Write-Host "version $v consistent across VERSION, README and CHANGELOG"
+          $plugin = Get-Content .claude-plugin/plugin.json -Raw | ConvertFrom-Json
+          if ($plugin.version -ne $v) { throw "plugin.json version $($plugin.version) does not match VERSION $v" }
+          Write-Host "version $v consistent across VERSION, README, CHANGELOG and plugin.json"
 
       # Deterministic and local: no network, so it can gate a pull request.
       - name: Markdown links resolve
@@ -91,6 +93,10 @@ jobs:
         shell: powershell
         run: ./tests/docs-test.ps1
 
+      - name: Plugin test
+        shell: powershell
+        run: ./tests/plugin-test.ps1 -Interpreter powershell
+
       # Network, so it reports without blocking: a shields.io outage must not
       # fail a pull request, but a badge stuck on "no releases" should be seen.
       - name: Badges render
@@ -137,6 +143,10 @@ jobs:
       - name: Docs test under pwsh
         shell: pwsh
         run: ./tests/docs-test.ps1
+
+      - name: Plugin test under pwsh
+        shell: pwsh
+        run: ./tests/plugin-test.ps1 -Interpreter pwsh
 
   posix:
     name: ${{ matrix.os }} (pwsh 7)
@@ -203,6 +213,10 @@ jobs:
       - name: Docs test
         shell: pwsh
         run: ./tests/docs-test.ps1
+
+      - name: Plugin test
+        shell: pwsh
+        run: ./tests/plugin-test.ps1 -Interpreter pwsh
 
       - name: install.sh wrapper (executable, LF, passes switches)
         shell: bash

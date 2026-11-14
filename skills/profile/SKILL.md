@@ -12,13 +12,11 @@ dev and creative; `show` changes nothing.
 
 ```
 # Windows
-powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\profile.ps1" $ARGUMENTS
+powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_SKILL_DIR}/../opus-tuner/scripts/profile.ps1" $ARGUMENTS
 
 # macOS / Linux
-pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/profile.ps1" $ARGUMENTS
+pwsh -NoProfile -File "${CLAUDE_SKILL_DIR}/../opus-tuner/scripts/profile.ps1" $ARGUMENTS
 ```
-
-If `CLAUDE_CONFIG_DIR` is set, substitute it for `~/.claude` in that path.
 
 The script prints the active profile and the exact instruction it adds. From
 this point on, follow that instruction for the rest of the session; if it says

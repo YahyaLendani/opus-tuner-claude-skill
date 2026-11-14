@@ -25,7 +25,7 @@ harness is in [`benchmarks/`](benchmarks/README.md), and its results are pending
 > runs the full suite on Windows, Ubuntu and macOS. Claude Code is the only
 > requirement — the terminal, the VS Code panel and the Desktop app all load the
 > same hooks. Plain claude.ai and Desktop (no hooks) use the portable
-> [`claude-skill`](skills/claude-skill/SKILL.md) instead.
+> [`claude-skill`](portable/claude-skill/SKILL.md) instead.
 
 ---
 
@@ -206,7 +206,53 @@ Windows PowerShell 5.1 is built in. macOS and Linux need **PowerShell 7
 (`pwsh`)**, because that is what Claude Code runs the hooks with. No admin
 rights, no modules.
 
-### Windows
+### As a plugin (recommended)
+
+In Claude Code, run:
+
+```
+/plugin marketplace add YahyaLendani/opus-tuner-claude-skill
+/plugin install opus-tuner@opus-tuner
+```
+
+Then run `/reload-plugins`, or restart Claude Code. That is all: the hooks and
+skills come with the plugin, with nothing to clone or run. Claude Code 2.1.275 and
+newer also accepts it in one step:
+`/plugin install opus-tuner --marketplace YahyaLendani/opus-tuner-claude-skill`.
+From a shell, use `claude plugin marketplace add YahyaLendani/opus-tuner-claude-skill`
+and then `claude plugin install opus-tuner@opus-tuner`.
+
+- **Windows:** the hooks run through Git Bash, which Claude Code itself uses, so
+  [Git for Windows](https://git-scm.com/download/win) must be installed.
+- **macOS / Linux:** install `pwsh` first (commands below). Without it, the first
+  session says so and nothing else changes.
+
+How the plugin differs from the installer below:
+
+- Skills are namespaced: `/opus-tuner:wrap`, `/opus-tuner:profile`,
+  `/opus-tuner:gear-max`. The short `/wrap` also works when no other skill uses that
+  name.
+- The token-discipline rules are added at each session start instead of being written
+  to `CLAUDE.md`, which a plugin cannot change. They are skipped when `CLAUDE.md`
+  already has the installer's block.
+- No status line and no `PreToolUse` read guard, because a plugin cannot set a status
+  line. Use the installer if you want either.
+- Config and state are the same files: `~/.claude/tuner.config.json` and
+  `~/.claude/state/tuner/`.
+- If the installer's hooks are also registered, the plugin's copies stand down, so no
+  event runs twice. Run `uninstall.ps1` from your clone to keep only the plugin.
+
+To update, open the plugin on the **Installed** tab of `/plugin` and choose **Update
+now**, or run `claude plugin update opus-tuner@opus-tuner`. Third-party marketplaces
+do not update automatically unless you turn it on in the **Marketplaces** tab of
+`/plugin`. To remove it, run `/plugin uninstall opus-tuner`.
+
+### With the installer
+
+The installer also adds the status line, writes the rules to `CLAUDE.md`, and
+offers the optional read guard and the hook-free `-NoHooks` mode.
+
+#### Windows
 
 ```powershell
 git clone https://github.com/YahyaLendani/opus-tuner-claude-skill.git
@@ -214,7 +260,7 @@ cd opus-tuner-claude-skill
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 ```
 
-### macOS / Linux
+#### macOS / Linux
 
 ```sh
 git clone https://github.com/YahyaLendani/opus-tuner-claude-skill.git
@@ -233,7 +279,7 @@ brew install --cask powershell
 snap install powershell --classic
 ```
 
-### The installer does
+#### The installer does
 
 - copy seven skills into `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`): the
   hook-free `claude-skill` only with `-NoHooks`, the `profile` switch only with
@@ -259,7 +305,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Force -Enforce
 
 ### Upgrading
 
-From your clone, pull and re-run the installer with `-Force`, then restart Claude Code:
+A plugin install updates from `/plugin` (see [above](#as-a-plugin-recommended)).
+For the installer, from your clone, pull and re-run the installer with `-Force`, then restart Claude Code:
 
 ```powershell
 # Windows
@@ -290,7 +337,7 @@ Hooks only exist in Claude Code. Two fallbacks:
 | Situation | Use |
 |---|---|
 | Claude Code, but hooks are blocked by policy | `install.ps1 -NoHooks` (or `./install.sh -NoHooks`): skills and the `CLAUDE.md` block, nothing in `settings.json`. |
-| Desktop app or claude.ai | The [`claude-skill`](skills/claude-skill/SKILL.md) skill: the same discipline as a self-contained, advisory SKILL.md. Upload the folder where your client supports skills, or paste its body into project instructions. |
+| Desktop app or claude.ai | The [`claude-skill`](portable/claude-skill/SKILL.md) skill: the same discipline as a self-contained, advisory SKILL.md. Upload the folder where your client supports skills, or paste its body into project instructions. |
 
 `-NoHooks` is advisory by design: no ceilings are enforced, no state is written.
 `doctor.ps1` says so if it finds no hooks.
@@ -372,7 +419,10 @@ In Claude Code, `/hooks` should list `UserPromptSubmit`, `PostToolUse`,
 `PostToolUseFailure`, `Stop`, `SessionStart`, `SessionEnd`, `PreCompact`; `/skills` should list
 `opus-tuner`, `gear-low`, `gear-medium`, `gear-xhigh`, `gear-max`, `wrap`,
 `profile`. With `-NoHooks`, `/hooks` is empty and that is expected, and `/skills`
-shows `claude-skill` instead of `profile`.
+shows `claude-skill` instead of `profile`. A plugin install lists the same skills
+with the `opus-tuner:` prefix. Its doctor is in the plugin's own folder, under
+`~/.claude/plugins/cache/`; it checks the plugin's `hooks/hooks.json` instead of
+`settings.json`, and `-Replay` runs those commands.
 
 ## Configure
 
@@ -433,6 +483,8 @@ only finds a baseline named `baseline-*.csv` in `state/tuner/`; for any other fi
 
 ## Uninstall
 
+A plugin install: `/plugin uninstall opus-tuner`. For the installer:
+
 ```powershell
 # Windows, from the clone
 powershell -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1
@@ -479,7 +531,7 @@ uninstaller rather than deleting folders by hand.
 | [SECURITY.md](SECURITY.md) | Trust boundary, what the scripts read and write, how to report a vulnerability |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | What is expected here, and the one private channel for reporting a problem |
 | [skills/opus-tuner/README.md](skills/opus-tuner/README.md) | Technical reference for the installed skill |
-| [skills/claude-skill/SKILL.md](skills/claude-skill/SKILL.md) | Portable, hook-free version for Desktop and claude.ai |
+| [portable/claude-skill/SKILL.md](portable/claude-skill/SKILL.md) | Portable, hook-free version for Desktop and claude.ai |
 
 ## License
 

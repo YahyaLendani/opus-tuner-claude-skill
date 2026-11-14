@@ -163,7 +163,9 @@ elseif (-not (Test-Path -LiteralPath $claudeDir)) { New-Item -ItemType Directory
 Write-Host ''
 Write-Host 'skills' -ForegroundColor Yellow
 foreach ($s in $skills) {
-    $src = Join-Path (Join-Path $PSScriptRoot 'skills') $s
+    # The hook-free skill lives outside skills/, which the plugin install loads whole.
+    $srcRoot = if ($s -eq 'claude-skill') { 'portable' } else { 'skills' }
+    $src = Join-Path (Join-Path $PSScriptRoot $srcRoot) $s
     $dst = Join-Path $skillsDir $s
     if (-not (Test-Path -LiteralPath $src)) { throw "missing source folder: $src" }
 

@@ -131,6 +131,26 @@ try {
     $context = New-Object System.Collections.ArrayList
     $note = [string]$cfg['profileNote']
     if ($note -and -not $monitor -and $source -ne 'resume' -and $source -ne 'fork') { [void]$context.Add($note) }
+
+    # install.ps1 writes the token-discipline rules into CLAUDE.md. A plugin cannot
+    # touch CLAUDE.md, so the plugin install adds them here, on the same sources as
+    # the profile note, unless CLAUDE.md already carries the installer's block.
+    if ($env:OPUS_TUNER_VIA_PLUGIN -and -not $monitor -and $source -ne 'resume' -and $source -ne 'fork') {
+        $claudeMd = Join-Path $script:TunerRoot 'CLAUDE.md'
+        $hasBlock = $false
+        try { $hasBlock = ([System.IO.File]::ReadAllText($claudeMd)).Contains('<!-- opus-tuner:begin -->') } catch { }
+        if (-not $hasBlock) {
+            [void]$context.Add((@(
+                '# token discipline (opus-tuner)'
+                '- Batch independent tool calls in one message; every turn re-reads all context.'
+                '- Grep before Read; bound reads with offset/limit.'
+                '- A `[tuner] gear=X` line means invoke the `opus-tuner:gear-X` skill first.'
+                '- Send breadth (locating code, many files, suites) to a subagent; keep judgement local.'
+                '- When the user wants to continue in a fresh session, prepare and verify a handoff with the `opus-tuner:wrap` skill, then ask them to run `/clear`.'
+                '- Never trade verification for tokens.'
+            ) -join "`n"))
+        }
+    }
     if ($body) { [void]$context.Add($body) }
 
     $out = @{}

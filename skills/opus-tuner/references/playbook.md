@@ -62,15 +62,16 @@ rebuild whatever the handoff leaves out. Write the handoff for that reader.
 
 ## Reading the audit
 
+`audit.ps1` sits in this skill's `scripts` folder, next to the `ctx.ps1` that
+`SKILL.md` names. Run it from there:
+
 ```
 # Windows
-powershell -NoProfile -File "$env:USERPROFILE\.claude\skills\opus-tuner\scripts\audit.ps1" -Recent 20
+powershell -NoProfile -File "<this skill's folder>/scripts/audit.ps1" -Recent 20
 
 # macOS / Linux
-pwsh -NoProfile -File "$HOME/.claude/skills/opus-tuner/scripts/audit.ps1" -Recent 20
+pwsh -NoProfile -File "<this skill's folder>/scripts/audit.ps1" -Recent 20
 ```
-
-If `CLAUDE_CONFIG_DIR` is set, substitute it for `~/.claude` in that path.
 
 Three numbers, in this order:
 

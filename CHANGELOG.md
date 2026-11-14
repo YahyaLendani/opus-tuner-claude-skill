@@ -5,6 +5,32 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- Install as a Claude Code plugin: add this repository as a marketplace and install
+  `opus-tuner` from it, with nothing to run by hand. The plugin brings the seven hook
+  events and the hooked skill set. Its hooks run through `hooks/run.sh`, which uses
+  Windows PowerShell on Windows (through Git Bash, which Claude Code already uses) and
+  `pwsh` on macOS and Linux. Without `pwsh`, the first session says so and nothing
+  else changes.
+- In a plugin install, `SessionStart` adds the token-discipline rules that
+  `install.ps1` writes to `CLAUDE.md`, since a plugin cannot write that file. It skips
+  them when `CLAUDE.md` already has the installer's block, and in monitor mode.
+- `doctor.ps1` recognises a plugin install: it checks `hooks/hooks.json`, the runner
+  and Git Bash, `-Replay` runs the plugin's own command strings, and it notes when the
+  installer's hooks are registered too.
+- `tests/plugin-test.ps1`, in CI on every platform. CI also checks that
+  `.claude-plugin/plugin.json` carries the version in `VERSION`.
+
+### Changed
+
+- The hook-free `claude-skill` moved from `skills/` to `portable/`, because a plugin
+  loads every skill under `skills/`. `install.ps1 -NoHooks` still installs it.
+- The skill docs locate their scripts from the skill's own folder rather than from
+  `~/.claude/skills`, so they work from the plugin cache too.
+- If both the installer's hooks and the plugin are present, the plugin's copies exit
+  without doing anything, so no event runs twice.
+
 ## [0.7.4] - 2026-11-02
 
 ### Fixed

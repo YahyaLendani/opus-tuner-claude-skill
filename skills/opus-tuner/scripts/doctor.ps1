@@ -49,11 +49,23 @@ if (Test-Path -LiteralPath $versionFile) {
     if ($raw) { $script:TunerVersion = $raw }
 }
 
+# Installed as a plugin, this runs from <plugin root>/skills/opus-tuner/scripts in
+# Claude Code's plugin cache. The hooks then come from <plugin root>/hooks/hooks.json
+# and the skills from <plugin root>/skills, while config and state stay in the
+# config dir as usual, so the vendored derivation below must not apply.
+$pluginRoot = ''
+if (-not $Root) {
+    $candidate = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+    if ($candidate -and (Test-Path -LiteralPath (Join-Path (Join-Path $candidate '.claude-plugin') 'plugin.json'))) {
+        $pluginRoot = $candidate
+    }
+}
+
 if ($Root) {
     $script:TunerRoot = $Root
     $script:TunerState = Join-Path (Join-Path $Root 'state') 'tuner'
     $script:TunerConfig = Join-Path $Root 'tuner.config.json'
-} elseif (-not $env:CLAUDE_CONFIG_DIR) {
+} elseif (-not $env:CLAUDE_CONFIG_DIR -and -not $pluginRoot) {
     # A vendored copy lives at <root>/skills/opus-tuner/scripts, so the tree the
     # doctor belongs to is three levels up. The installed copy derives ~/.claude,
     # which is what _common.ps1 already chose, so this is a no-op there.
@@ -67,7 +79,7 @@ if ($Root) {
 }
 
 $settingsPath = Join-Path $script:TunerRoot 'settings.json'
-$skillsDir = Join-Path $script:TunerRoot 'skills'
+$skillsDir = if ($pluginRoot) { Join-Path $pluginRoot 'skills' } else { Join-Path $script:TunerRoot 'skills' }
 $checks = New-Object System.Collections.ArrayList
 $fail = 0
 
@@ -111,28 +123,39 @@ function Get-HookPaths {
 # settings.json, through the shell declared next to it, with a realistic payload
 # on stdin. The config dir is redirected so state and the decision log land in a
 # sandbox rather than the live install.
+#
+# A plugin command names ${CLAUDE_PLUGIN_ROOT}. Claude Code substitutes it (with
+# forward slashes on Windows) and also exports it, so the replay does both.
 function Invoke-RegisteredHook {
-    param($Settings, [string]$Event, [string]$Payload, [string]$ConfigDir)
+    param($Settings, [string]$Event, [string]$Payload, [string]$ConfigDir, [string]$PluginRoot = '')
 
     $group = @($Settings.hooks.$Event) | Where-Object {
-        (@($_.hooks | ForEach-Object { [string]$_.command }) -join ' ') -match 'opus-tuner[/\\]scripts[/\\]'
+        (@($_.hooks | ForEach-Object { [string]$_.command }) -join ' ') -match 'opus-tuner[/\\]scripts[/\\]|hooks/run\.sh"'
     } | Select-Object -First 1
     if (-not $group) { return @{ ran = $false; detail = 'no opus-tuner hook registered' } }
 
     $h = @($group.hooks)[0]
     $cmd = [string]$h.command
     $shell = [string]$h.shell
+    if ($PluginRoot) { $cmd = $cmd.Replace('${CLAUDE_PLUGIN_ROOT}', ($PluginRoot -replace '\\', '/')) }
     $errFile = Join-Path $ConfigDir ("replay-$Event.err")
+    $bash = ''
+    if ($script:OnWindows -and $shell -eq 'bash') {
+        $bash = Get-GitBash
+        if (-not $bash) { return @{ ran = $false; detail = 'Git Bash not found; plugin hooks on Windows need Git for Windows' } }
+    }
 
     $prev = $env:CLAUDE_CONFIG_DIR
     $prevState = $env:OPUS_TUNER_STATE
+    $prevPlugin = $env:CLAUDE_PLUGIN_ROOT
     $env:CLAUDE_CONFIG_DIR = $ConfigDir
     $env:OPUS_TUNER_STATE = Join-Path (Join-Path $ConfigDir 'state') 'tuner'
+    if ($PluginRoot) { $env:CLAUDE_PLUGIN_ROOT = $PluginRoot }
     try {
         if ($script:OnWindows -and $shell -ne 'bash') {
             $out = $Payload | & powershell -NoProfile -ExecutionPolicy Bypass -Command $cmd 2> $errFile
         } elseif ($script:OnWindows) {
-            $out = $Payload | & bash -c $cmd 2> $errFile
+            $out = $Payload | & $bash -c $cmd 2> $errFile
         } else {
             $out = $Payload | & sh -c $cmd 2> $errFile
         }
@@ -144,7 +167,21 @@ function Invoke-RegisteredHook {
     } finally {
         $env:CLAUDE_CONFIG_DIR = $prev
         $env:OPUS_TUNER_STATE = $prevState
+        $env:CLAUDE_PLUGIN_ROOT = $prevPlugin
     }
+}
+
+# The script a plugin hook command runs: bash "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <name>
+function Get-PluginHookScript {
+    param($Hooks, [string]$Event)
+    if (-not $Hooks -or -not $Hooks.PSObject.Properties['hooks'] -or -not $Hooks.hooks.PSObject.Properties[$Event]) { return '' }
+    foreach ($group in @($Hooks.hooks.$Event)) {
+        foreach ($h in @($group.hooks)) {
+            $m = [regex]::Match([string]$h.command, 'hooks/run\.sh"\s+([a-z-]+)')
+            if ($m.Success) { return "$($m.Groups[1].Value).ps1" }
+        }
+    }
+    return ''
 }
 
 $expected = [ordered]@{
@@ -173,15 +210,55 @@ if ($settingsExists) {
 # copy has no hooks by design, and a row of red wiring checks for that would teach
 # people to ignore the doctor.
 $hookCount = 0
+$installerHookCount = 0
 if ($settings) {
     foreach ($ev in $expected.Keys) {
-        if (@(Get-HookPaths $settings $ev).Count -gt 0) { $hookCount++ }
+        if (@(Get-HookPaths $settings $ev).Count -gt 0) { $installerHookCount++ }
+    }
+}
+$hookCount = $installerHookCount
+
+# A plugin install registers nothing in settings.json: its hooks are in hooks.json.
+$pluginHooks = $null
+if ($pluginRoot) {
+    $hooksJson = Join-Path (Join-Path $pluginRoot 'hooks') 'hooks.json'
+    try {
+        $pluginHooks = Get-Content -LiteralPath $hooksJson -Raw -Encoding UTF8 | ConvertFrom-Json
+        Add-Check 'plugin hooks.json parses' ($null -ne $pluginHooks -and $null -ne $pluginHooks.PSObject.Properties['hooks']) $hooksJson
+    } catch {
+        Add-Check 'plugin hooks.json parses' $false $_.Exception.Message
+    }
+    $hookCount = 0
+    foreach ($ev in $expected.Keys) {
+        if (Get-PluginHookScript $pluginHooks $ev) { $hookCount++ }
     }
 }
 $advisory = $SkillsOnly -or ($hookCount -eq 0)
 
+if ($pluginRoot -and -not $SkillsOnly) {
+    foreach ($ev in $expected.Keys) {
+        $name = Get-PluginHookScript $pluginHooks $ev
+        Add-Check "$ev registered (plugin)" ($name -eq $expected[$ev]) "found '$name'"
+        if ($name) {
+            $path = Join-Path (Join-Path (Join-Path (Join-Path $pluginRoot 'skills') 'opus-tuner') 'scripts') $name
+            Add-Check "$ev script exists" (Test-Path -LiteralPath $path) $path
+        }
+    }
+    $runner = Join-Path (Join-Path $pluginRoot 'hooks') 'run.sh'
+    Add-Check 'plugin hook runner exists' (Test-Path -LiteralPath $runner) $runner
+    if ($script:OnWindows) {
+        $bash = Get-GitBash
+        Add-Check 'Git Bash available for plugin hooks' ([bool]$bash) 'install Git for Windows: https://git-scm.com/download/win'
+    }
+    if ($installerHookCount -gt 0) {
+        Add-Note 'installer hooks registered too' 'settings.json also has the hooks install.ps1 added. Those run and the plugin copies stand down, so nothing runs twice; run uninstall.ps1 to keep only the plugin.'
+    }
+}
+
 if (-not $settingsExists) {
-    if ($advisory) {
+    if ($pluginRoot) {
+        Add-Skip 'settings.json exists' 'plugin install: hooks come from hooks.json'
+    } elseif ($advisory) {
         Add-Skip 'settings.json exists' 'advisory install: nothing to register'
     } else {
         Add-Check 'settings.json exists' $false $settingsPath
@@ -199,6 +276,8 @@ if ($settings) {
             Add-Skip "$ev registered" 'advisory install: no hooks registered'
             continue
         }
+        # Checked against hooks.json above.
+        if ($pluginRoot) { continue }
         Add-Check "$ev registered" (@($paths).Count -ge 1) "found $(@($paths).Count)"
         if (@($paths).Count -ge 1) {
             $missing = @($paths | Where-Object { -not (Test-Path -LiteralPath $_) })
@@ -247,9 +326,11 @@ if ($Replay) {
     if ($SkillsOnly -or $advisory) {
         $why = if ($SkillsOnly) { 'skills-only: hooks not checked' } else { 'advisory install: no hook commands to execute' }
         Add-Skip 'replay' $why
-    } elseif (-not $settings) {
+    } elseif (-not $settings -and -not $pluginRoot) {
         Add-Check 'replay: settings.json available' $false 'install first'
     } else {
+        # A plugin install replays its own hooks.json, whatever settings.json holds.
+        $replaySource = if ($pluginRoot) { $pluginHooks } else { $settings }
         $replayRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('opus-tuner-replay-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
         $replayProject = Join-Path $replayRoot 'project'
         $replayHandoffs = Join-Path (Join-Path (Join-Path $replayRoot 'state') 'tuner') 'handoffs'
@@ -276,7 +357,7 @@ if ($Replay) {
             # Not $json: PowerShell is case-insensitive, and this script's -Json
             # parameter is a [switch], so assigning a string to it fails.
             $payloadJson = $c['payload'] | ConvertTo-Json -Depth 8 -Compress
-            $r = Invoke-RegisteredHook $settings $c.event $payloadJson $replayRoot
+            $r = Invoke-RegisteredHook $replaySource $c.event $payloadJson $replayRoot $pluginRoot
             if (-not $r['ran']) {
                 Add-Check $name $false ([string]$r['detail'])
                 continue
@@ -409,7 +490,7 @@ $section = ''
 foreach ($c in $checks) {
     $group = switch -Regex ($c.check) {
         '^replay' { 'replay'; break }
-        '^(settings|UserPromptSubmit|PostToolUse|PostToolUseFailure|Stop|SessionStart|PreCompact|PreToolUse|status|model|Opus)' { 'wiring'; break }
+        '^(settings|plugin|installer|Git Bash|UserPromptSubmit|PostToolUse|PostToolUseFailure|Stop|SessionStart|SessionEnd|PreCompact|PreToolUse|status|model|Opus)' { 'wiring'; break }
         '^(routineTokens|deepTokens|mode|profile|tuner|interruptions|hardWrap|blockManualCompact|guard mode)' { 'configuration'; break }
         '^skill' { 'skills'; break }
         '^all ' { 'scripts'; break }

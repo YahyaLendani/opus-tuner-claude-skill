@@ -22,6 +22,43 @@ $script:TunerConfig = Join-Path $script:TunerRoot 'tuner.config.json'
 if ($env:OPUS_TUNER_CONFIG) { $script:TunerConfig = $env:OPUS_TUNER_CONFIG }
 if ($env:OPUS_TUNER_STATE)  { $script:TunerState  = $env:OPUS_TUNER_STATE }
 
+# Installed as a plugin, the hooks come from the plugin's hooks.json through
+# hooks/run.sh, which sets OPUS_TUNER_VIA_PLUGIN. If install.ps1 also registered
+# hooks in settings.json, every event would run twice, so the plugin's copy stands
+# down and leaves the work to the registered one. Scripts the model runs by hand
+# (ctx, brief, profile) never come through run.sh, so they always answer.
+if ($env:OPUS_TUNER_VIA_PLUGIN -and -not $env:OPUS_TUNER_ALLOW_DUPLICATE) {
+    try {
+        $registered = [System.IO.File]::ReadAllText((Join-Path $script:TunerRoot 'settings.json'))
+        if ($registered -match 'opus-tuner[/\\]+scripts[/\\]+(route|post-tool|stop|session-start|session-end|pre-compact)\.ps1') { exit 0 }
+    } catch { }
+}
+
+# The bash Claude Code gives plugin hooks: Git Bash on Windows, the system bash
+# elsewhere. On Windows a bare "bash" can resolve to System32\bash.exe, which is
+# WSL and would run the hook in another OS, so look for Git's own copy. Returns
+# '' when Windows has no Git Bash.
+function Get-GitBash {
+    if (-not $script:OnWindows) { return 'bash' }
+    $candidates = New-Object System.Collections.ArrayList
+    if ($env:CLAUDE_CODE_GIT_BASH_PATH) { [void]$candidates.Add($env:CLAUDE_CODE_GIT_BASH_PATH) }
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($git) {
+        $gitDir = Split-Path -Parent $git.Source
+        [void]$candidates.Add((Join-Path (Split-Path -Parent $gitDir) 'bin\bash.exe'))
+        [void]$candidates.Add((Join-Path (Split-Path -Parent (Split-Path -Parent $gitDir)) 'bin\bash.exe'))
+    }
+    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)) {
+        if (-not $base) { continue }
+        [void]$candidates.Add((Join-Path $base 'Git\bin\bash.exe'))
+        [void]$candidates.Add((Join-Path $base 'Programs\Git\bin\bash.exe'))
+    }
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { return $c }
+    }
+    return ''
+}
+
 function ConvertTo-Hashtable {
     param($InputObject)
     if ($null -eq $InputObject) { return $null }

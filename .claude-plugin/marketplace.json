@@ -1,0 +1,14 @@
+{
+  "name": "opus-tuner",
+  "description": "opus-tuner for Claude Code, installable as a plugin.",
+  "owner": {
+    "name": "Yahya Lendani"
+  },
+  "plugins": [
+    {
+      "name": "opus-tuner",
+      "source": "./",
+      "description": "Context tracking and safe session handoffs for long Claude Code sessions."
+    }
+  ]
+}

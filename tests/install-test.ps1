@@ -88,8 +88,8 @@ try {
     # 0.5.0 and earlier installed the hook-free claude-skill everywhere. A hooked
     # install must move that leftover to the backups, since its description
     # would otherwise cost context on every request for nothing.
-    $repoSkills = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills'
-    Copy-Item -LiteralPath (Join-Path $repoSkills 'claude-skill') -Destination (Join-Path (Join-Path $sandbox 'skills') 'claude-skill') -Recurse -Force
+    $repoPortable = Join-Path (Split-Path -Parent $PSScriptRoot) 'portable'
+    Copy-Item -LiteralPath (Join-Path $repoPortable 'claude-skill') -Destination (Join-Path (Join-Path $sandbox 'skills') 'claude-skill') -Recurse -Force
     & $install | Out-Null
     Check 'install exits 0' ($LASTEXITCODE -eq 0) "exit $LASTEXITCODE"
     Check 'leftover claude-skill moved out of skills/' (-not (Test-Path (Join-Path (Join-Path $sandbox 'skills') 'claude-skill')))
