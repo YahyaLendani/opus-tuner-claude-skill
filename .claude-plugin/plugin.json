@@ -1,7 +1,7 @@
 {
   "name": "opus-tuner",
   "displayName": "opus-tuner",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "description": "Context tracking and safe session handoffs for long Claude Code sessions: a context ceiling, tier and gear routing, and a verified handoff before /clear.",
   "author": {
     "name": "Yahya Lendani",
